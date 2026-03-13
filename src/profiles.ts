@@ -6,11 +6,14 @@ const QUESTION_ROUTING =
 
 export const PROFILES: Record<string, WorkerProfile> = {
   plan: {
-    allowedTools: ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Write", "Agent"],
-    permissionMode: "acceptEdits",
+    allowedTools: ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Agent"],
+    permissionMode: "plan",
     systemPromptAppend:
-      "You are exploring a task and producing a plan or design document. " +
-      "Do not modify existing code. Write output to docs/ only. " +
+      "You are exploring a codebase and producing a plan. " +
+      "You are READ-ONLY. Do NOT create, modify, or delete any files. " +
+      "Use Bash only for exploration (git log, ls, test runs) — never for writing or modifying. " +
+      "Use the superpowers:brainstorming skill to explore intent, requirements, and design. " +
+      "Return your plan as text output only. " +
       QUESTION_ROUTING,
     settingSources: ["project"],
     maxTurns: 30,

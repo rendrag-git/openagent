@@ -32,8 +32,13 @@ describe("profiles", () => {
     assert.ok(!PROFILES.check.allowedTools.includes("Write"));
   });
 
-  it("all profiles use acceptEdits permission mode", () => {
+  it("plan profile uses plan permission mode", () => {
+    assert.equal(PROFILES.plan.permissionMode, "plan");
+  });
+
+  it("non-plan profiles use acceptEdits permission mode", () => {
     for (const [name, profile] of Object.entries(PROFILES)) {
+      if (name === "plan") continue;
       assert.equal(
         profile.permissionMode,
         "acceptEdits",
