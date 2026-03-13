@@ -1,59 +1,58 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { handle } from "../../../.openclaw/hooks/openagent-dispatch/handler.ts";
+import handler from "../../../.openclaw/hooks/openagent-dispatch/handler.ts";
+
+function makeEvent(content: string): any {
+  return {
+    type: "message",
+    action: "received",
+    sessionKey: "agent:dev:main",
+    timestamp: new Date(),
+    messages: [] as string[],
+    context: {
+      from: "agent:pm:main",
+      content,
+      channelId: "discord",
+    },
+  };
+}
 
 describe("e2e: openagent-dispatch hook", () => {
-  it("dispatches an execute task and returns structured result", async () => {
-    let sentEnvelope: Record<string, unknown> | null = null;
+  it("dispatches a plan task and pushes result message", async () => {
+    const task = "List the files in the current directory. Keep answer under 50 words.";
+    const fence = JSON.stringify({
+      engine: "openagent",
+      worker: "plan",
+      task,
+      cwd: process.cwd(),
+    }, null, 2);
 
-    const mockSend = async (env: Record<string, unknown>) => {
-      sentEnvelope = env;
-    };
+    const event = makeEvent(`Run this:\n\`\`\`openagent\n${fence}\n\`\`\``);
+    await handler(event);
 
-    const envelope = {
-      id: "env_test_1",
-      from: "pm",
-      to: "dev",
-      intent: "TASK_REQUEST",
-      threadId: "thread_test_1",
-      payload: {
-        engine: "openagent",
-        worker: "plan",
-        task: "List the files in the current directory. Keep answer under 50 words.",
-        cwd: process.cwd(),
-      },
-    };
+    assert.equal(event.context.__oc_blocked, true, "should block raw message");
+    assert.ok(event.messages.length > 0, "should push a result message");
+    const msg = event.messages[0] as string;
+    assert.ok(msg.includes("openagent plan"), "message should mention worker");
+    assert.ok(msg.length > 20, "message should have content");
 
-    const handled = await handle(envelope, mockSend);
-
-    assert.equal(handled, true, "hook should handle openagent requests");
-    assert.ok(sentEnvelope, "should have sent a response envelope");
-    assert.equal(sentEnvelope!.intent, "TASK_RESULT");
-    assert.equal(sentEnvelope!.to, "pm");
-
-    const payload = sentEnvelope!.payload as Record<string, unknown>;
-    assert.equal(typeof payload.success, "boolean");
-    assert.equal(typeof payload.output, "string");
-    assert.ok((payload.output as string).length > 0);
-
-    console.log("E2E result:", {
-      success: payload.success,
-      stopReason: payload.stopReason,
-      outputLength: (payload.output as string).length,
-    });
+    console.log("E2E result message:", msg.slice(0, 200));
   });
 
-  it("ignores non-openagent envelopes", async () => {
-    const envelope = {
-      id: "env_test_2",
-      from: "pm",
-      to: "dev",
-      intent: "TASK_REQUEST",
-      threadId: "thread_test_2",
-      payload: { task: "Do something with legacy" },
-    };
+  it("ignores messages without openagent fence", async () => {
+    const event = makeEvent("Hey dev, can you help with something?");
+    await handler(event);
 
-    const handled = await handle(envelope, async () => {});
-    assert.equal(handled, false, "should not handle legacy requests");
+    assert.equal(event.context.__oc_blocked, undefined, "should not block");
+    assert.equal(event.messages.length, 0, "should not push any messages");
+  });
+
+  it("ignores fences with wrong engine", async () => {
+    const fence = JSON.stringify({ engine: "legacy", task: "do something" });
+    const event = makeEvent(`\`\`\`openagent\n${fence}\n\`\`\``);
+    await handler(event);
+
+    assert.equal(event.context.__oc_blocked, undefined, "should not block");
+    assert.equal(event.messages.length, 0, "should not push any messages");
   });
 });
