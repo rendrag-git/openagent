@@ -4,7 +4,7 @@
 
 **Goal:** Rewrite the plan worker to use `canUseTool` for hard enforcement (block writes, intercept AskUserQuestion → bulletin board), run in a git worktree for safety, and apply `canUseTool` AskUserQuestion routing to all four PDCA workers.
 
-**Architecture:** All four workers get a `canUseTool` callback that intercepts `AskUserQuestion` and routes questions through the bulletin board. Plan and check workers additionally block Write/Edit. Plan runs in a throwaway git worktree — only `docs/plans/*.md` files survive. The `canUseTool` callback handles the full bulletin round-trip inline (classify → create → wait → synthesize → return), so the SDK session never parks. The orchestrator sees a complete result, with questions logged to `questions.json` in the job directory.
+**Architecture:** All four workers get a `canUseTool` callback that intercepts `AskUserQuestion` and routes questions through the bulletin board. Plan and check workers additionally block Write/Edit. Plan and check run in throwaway git worktrees — plan preserves only `docs/plans/*.md` files, check preserves nothing (text output only). Execute and act write to the real repo. The `canUseTool` callback handles the full bulletin round-trip inline (classify → create → wait → synthesize → return), so the SDK session never parks. The orchestrator sees a complete result, with questions logged to `questions.json` in the job directory.
 
 **Tech Stack:** TypeScript (ESM), `@anthropic-ai/claude-agent-sdk` (canUseTool API), bulletin-tools (SQLite), git worktrees, claude-haiku-4-5 (classifier).
 
@@ -623,20 +623,20 @@ git commit -m "feat: wire bulletin-integrated canUseTool into CLI with question 
 
 ---
 
-### Task 4: Worktree Isolation for Plan Worker
+### Task 4: Worktree Isolation for Plan + Check Workers
 
 **Files:**
 - Modify: `bin/openagent-run.ts`
 
-Plan worker runs in a throwaway git worktree. After the session, only `docs/plans/*.md` files are copied back.
+Plan and check workers run in throwaway git worktrees. Plan preserves `docs/plans/*.md` files (copied back). Check preserves nothing (text output only, worktree fully discarded).
 
 **Step 1: Add worktree management functions**
 
 In `bin/openagent-run.ts`, add:
 
 ```typescript
-function createWorktree(cwd: string, jobId: string): string {
-  const worktreePath = `/tmp/openagent-plan-${jobId}`;
+function createWorktree(cwd: string, workerName: string, jobId: string): string {
+  const worktreePath = `/tmp/openagent-${workerName}-${jobId}`;
   try {
     execSyncImport(`git worktree add "${worktreePath}" HEAD`, { cwd, encoding: "utf-8" });
   } catch {
@@ -646,8 +646,20 @@ function createWorktree(cwd: string, jobId: string): string {
   return worktreePath;
 }
 
-function cleanupWorktree(worktreePath: string, realCwd: string): void {
-  if (!worktreePath.startsWith("/tmp/openagent-plan-")) return;
+function cleanupWorktree(worktreePath: string, realCwd: string, workerName: string): void {
+  if (!worktreePath.startsWith("/tmp/openagent-")) return;
+
+  // Only plan preserves docs/plans/*.md — check preserves nothing
+  if (workerName !== "plan") {
+    // Skip file copy — just remove worktree
+    try {
+      execSyncImport(`git worktree remove "${worktreePath}" --force`, { cwd: realCwd, encoding: "utf-8" });
+    } catch {
+      try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
+      try { execSyncImport(`git worktree prune`, { cwd: realCwd, encoding: "utf-8" }); } catch {}
+    }
+    return;
+  }
 
   // Copy docs/plans/*.md back to real repo
   const planDir = path.join(worktreePath, "docs", "plans");
@@ -696,10 +708,10 @@ In `main()`, before running the plan worker:
   let effectiveCwd = cwd;
   let worktreePath: string | undefined;
 
-  // Plan runs in a worktree for isolation
-  if (worker === "plan") {
-    const jobId = jobDir?.split("/").pop() ?? `plan-${Date.now()}`;
-    worktreePath = createWorktree(cwd, jobId);
+  // Plan and check run in worktrees for isolation
+  if (worker === "plan" || worker === "check") {
+    const jobId = jobDir?.split("/").pop() ?? `${worker}-${Date.now()}`;
+    worktreePath = createWorktree(cwd, worker, jobId);
     effectiveCwd = worktreePath;
   }
 
@@ -709,7 +721,7 @@ In `main()`, before running the plan worker:
   } finally {
     // Cleanup worktree after plan
     if (worktreePath && worktreePath !== cwd) {
-      cleanupWorktree(worktreePath, cwd);
+      cleanupWorktree(worktreePath, cwd, worker);
     }
   }
 ```
@@ -727,7 +739,7 @@ node --experimental-strip-types bin/openagent-run.ts \
 Verify:
 - Plan runs successfully
 - No files modified in `/home/ubuntu/projects/openagent/src/`
-- Worktree is cleaned up (`ls /tmp/openagent-plan-*` shows nothing)
+- Worktree is cleaned up (`ls /tmp/openagent-*` shows nothing)
 
 **Step 4: Commit**
 
@@ -894,7 +906,7 @@ git commit -m "feat: update orchestrator for hardened plan worker with inline qu
 | 1 | canUseTool callback factory | src/can-use-tool.ts, tests/can-use-tool.test.ts | — |
 | 2 | Wire canUseTool into runSession + profiles | src/run-session.ts, types.ts, profiles.ts, workers/*.ts | After 1 |
 | 3 | Bulletin integration in CLI | bin/openagent-run.ts | After 1 |
-| 4 | Worktree isolation for plan | bin/openagent-run.ts | Independent |
+| 4 | Worktree isolation for plan + check | bin/openagent-run.ts | Independent |
 | 5 | Live SDK integration test | tests/hardened-plan.test.ts | After 1-4 |
 | 6 | Orchestrator update + smoke test | ~/clawd/agents/orchestrator/ | After 5 |
 
@@ -902,7 +914,7 @@ git commit -m "feat: update orchestrator for hardened plan worker with inline qu
 1. `canUseTool` blocks Write/Edit for plan+check workers (SDK-level enforcement)
 2. `canUseTool` allows Write only to `docs/plans/*.md` for plan worker
 3. `permissionMode: "plan"` as additional SDK guard
-4. Git worktree isolation for plan — rogue Bash writes are harmless
-5. Only `docs/plans/*.md` files survive worktree cleanup
+4. Git worktree isolation for plan + check — rogue Bash writes are harmless
+5. Plan: only `docs/plans/*.md` files survive worktree cleanup. Check: nothing survives (text output only)
 6. All AskUserQuestion calls route through bulletin board with 3-min timeout
 7. Question log persisted to `questions.json` for audit
