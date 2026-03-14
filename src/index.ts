@@ -29,6 +29,10 @@ export type {
   ParkedSession,
 } from "./types.ts";
 
+// canUseTool callback factory
+export { createCanUseTool } from "./can-use-tool.ts";
+export type { CanUseToolOptions } from "./can-use-tool.ts";
+
 // Profiles
 export { PROFILES, getProfile } from "./profiles.ts";
 

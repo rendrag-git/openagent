@@ -12,5 +12,6 @@ export async function plan(request: PlanRequest): Promise<TaskResult> {
     onQuestion: request.onQuestion,
     onProgress: request.onProgress,
     includeDiff: request.includeDiff,
+    canUseTool: request.canUseTool,
   });
 }

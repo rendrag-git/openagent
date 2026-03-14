@@ -36,15 +36,18 @@ describe("profiles", () => {
     assert.equal(PROFILES.plan.permissionMode, "plan");
   });
 
-  it("non-plan profiles use acceptEdits permission mode", () => {
-    for (const [name, profile] of Object.entries(PROFILES)) {
-      if (name === "plan") continue;
+  it("execute and act profiles use acceptEdits permission mode", () => {
+    for (const name of ["execute", "act"]) {
       assert.equal(
-        profile.permissionMode,
+        PROFILES[name].permissionMode,
         "acceptEdits",
         `${name} should use acceptEdits`
       );
     }
+  });
+
+  it("check profile uses plan permission mode", () => {
+    assert.equal(PROFILES.check.permissionMode, "plan");
   });
 
   it("all profiles include question routing in system prompt", () => {
@@ -72,5 +75,23 @@ describe("profiles", () => {
 
   it("getProfile returns undefined for unknown name", () => {
     assert.equal(getProfile("unknown"), undefined);
+  });
+
+  it("plan profile has denyTools", () => {
+    assert.ok(PROFILES.plan.denyTools?.includes("Write"));
+    assert.ok(PROFILES.plan.denyTools?.includes("Edit"));
+  });
+
+  it("plan profile has allowWritePaths", () => {
+    assert.ok(PROFILES.plan.allowWritePaths?.includes("docs/plans/"));
+  });
+
+  it("check profile has denyTools", () => {
+    assert.ok(PROFILES.check.denyTools?.includes("Write"));
+    assert.ok(PROFILES.check.denyTools?.includes("Edit"));
+  });
+
+  it("execute profile has no denyTools", () => {
+    assert.equal(PROFILES.execute.denyTools, undefined);
   });
 });

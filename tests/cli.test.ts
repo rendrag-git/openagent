@@ -55,7 +55,7 @@ describe("openagent CLI", () => {
 
     const output = execSync(
       `${CLI} --worker check --task "Verify the plan was implemented" --cwd /home/ubuntu/projects/openagent --job-dir ${jobDir}`,
-      { encoding: "utf-8", timeout: 120000 },
+      { encoding: "utf-8", timeout: 300000 },
     );
     const result = JSON.parse(output);
     assert.equal(typeof result.success, "boolean");

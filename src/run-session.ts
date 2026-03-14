@@ -56,6 +56,7 @@ interface RunSessionInput extends RunInput {
   includeDiff?: boolean;
   resume?: string;
   resumeAnswer?: string;
+  canUseTool?: TaskContext["canUseTool"];
 }
 
 export async function runSession(input: RunSessionInput): Promise<TaskResult> {
@@ -68,6 +69,11 @@ export async function runSession(input: RunSessionInput): Promise<TaskResult> {
   let output = "";
   let stopReason: TaskResult["stopReason"] = "end_turn";
   const questions: Question[] = [];
+
+  // Pass canUseTool callback to SDK if provided
+  if (input.canUseTool) {
+    (config.options as Record<string, unknown>).canUseTool = input.canUseTool;
+  }
 
   // If resuming, add resume option
   if (input.resume) {

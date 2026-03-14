@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execSync as execSyncChild } from "node:child_process";
+import { execSync as execSyncBulletin } from "node:child_process";
 import { plan, execute, check, act } from "../src/index.ts";
+import { createCanUseTool } from "../src/can-use-tool.ts";
 import type { TaskResult } from "../src/types.ts";
 
 // --- Parse args ---
@@ -21,10 +24,24 @@ const worker = args.worker;
 const task = args.task;
 const cwd = args.cwd;
 const jobDir = args["job-dir"];
+const dryRun = process.argv.includes("--dry-run");
 
 if (!worker || !task || !cwd) {
-  console.error("Usage: openagent-run --worker <plan|execute|check|act|classify|resume> --task <task> --cwd <cwd> --job-dir <dir>");
+  console.error("Usage: openagent-run --worker <plan|execute|check|act|classify|resume> --task <task> --cwd <cwd> --job-dir <dir> [--dry-run]");
   process.exit(1);
+}
+
+// --- Write helper: skips actual writes in dry-run mode ---
+
+function writeResult(filePath: string, content: string): void {
+  if (dryRun) {
+    console.error(`[dry-run] Would write to ${filePath}:`);
+    console.error(content);
+    return;
+  }
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, content);
 }
 
 // --- Load context from previous phase if available ---
@@ -58,11 +75,11 @@ function loadContext(jobDir: string, worker: string): string | undefined {
 
 // --- Run worker ---
 
-const WORKERS: Record<string, (a: { task: string; cwd: string; context?: string }) => Promise<TaskResult>> = {
-  plan: (a) => plan({ task: a.task, cwd: a.cwd, context: a.context }),
-  execute: (a) => execute({ plan: a.task, cwd: a.cwd, context: a.context, includeDiff: true }),
-  check: (a) => check({ task: a.task, cwd: a.cwd, context: a.context }),
-  act: (a) => act({ issues: a.task, cwd: a.cwd, context: a.context, includeDiff: true }),
+const WORKERS: Record<string, (a: { task: string; cwd: string; context?: string; canUseTool?: (toolName: string, input: Record<string, unknown>, options: any) => Promise<any> }) => Promise<TaskResult>> = {
+  plan: (a) => plan({ task: a.task, cwd: a.cwd, context: a.context, canUseTool: a.canUseTool }),
+  execute: (a) => execute({ plan: a.task, cwd: a.cwd, context: a.context, includeDiff: true, canUseTool: a.canUseTool }),
+  check: (a) => check({ task: a.task, cwd: a.cwd, context: a.context, canUseTool: a.canUseTool }),
+  act: (a) => act({ issues: a.task, cwd: a.cwd, context: a.context, includeDiff: true, canUseTool: a.canUseTool }),
 };
 
 // --- Classify worker (Haiku domain classifier) ---
@@ -101,6 +118,190 @@ async function classifyQuestion(task: string, routingJson: string): Promise<{ ro
   }
 }
 
+// --- Bulletin-integrated canUseTool for CLI ---
+
+const ROUTING_TABLE_PATH = path.join(
+  process.env.HOME ?? "/home/ubuntu",
+  ".openclaw", "openagent", "question-routing.json",
+);
+
+const BULLETIN_DB_PATH = path.join(
+  process.env.HOME ?? "/home/ubuntu",
+  ".openclaw", "mailroom", "bulletins", "bulletins.db",
+);
+
+const BULLETIN_POST_CLI = path.join(
+  process.env.HOME ?? "/home/ubuntu",
+  ".openclaw", "bin", "bulletin-post",
+);
+
+function loadRoutingTable(): Record<string, unknown> {
+  try {
+    return JSON.parse(fs.readFileSync(ROUTING_TABLE_PATH, "utf-8"));
+  } catch {
+    return { routes: { default: ["dev"] }, alwaysSubscribe: ["pm"] };
+  }
+}
+
+async function bulletinAskHandler(input: Record<string, unknown>): Promise<string[]> {
+  const questions = (input as any).questions ?? [];
+  const questionTexts: string[] = questions.map((q: any) => q.question ?? String(q));
+  const questionText = questionTexts.join("\n");
+
+  // 1. Classify domain
+  const routingTable = loadRoutingTable();
+  const routeResult = await classifyQuestion(questionText, JSON.stringify(routingTable));
+  const routeKey = routeResult.routeKey;
+
+  // 2. Look up subscribers
+  const routes = (routingTable as any).routes ?? {};
+  const alwaysSubscribe = (routingTable as any).alwaysSubscribe ?? [];
+  const subscribers = [...new Set([...(routes[routeKey] ?? routes.default ?? ["dev"]), ...alwaysSubscribe])];
+
+  // 3. Create bulletin
+  const bulletinId = `blt-${args["job-dir"]?.split("/").pop() ?? "unknown"}-q${Date.now()}`;
+  const body = [
+    "**Question from openagent**",
+    `**Phase:** ${worker}`,
+    "",
+    "---",
+    "",
+    questionText,
+    "",
+    "---",
+    "",
+    "Respond with your recommendation. Use bulletin_respond with align/partial/oppose.",
+  ].join("\\n");
+
+  try {
+    execSyncBulletin(
+      `${BULLETIN_POST_CLI} --topic "openagent: ${questionText.slice(0, 60).replace(/"/g, "'")}" ` +
+      `--body "${body.replace(/"/g, '\\"')}" ` +
+      `--subscribers "${subscribers.join(",")}" ` +
+      `--protocol advisory ` +
+      `--id "${bulletinId}" ` +
+      `--timeout 3`,
+      { encoding: "utf-8", timeout: 10000 },
+    );
+  } catch {
+    return ["Unable to route question to agents. Please proceed with your best judgment."];
+  }
+
+  // 4. Poll for bulletin closure (10s intervals, max 3 minutes)
+  let Database: any;
+  try {
+    Database = (await import("better-sqlite3")).default;
+  } catch {
+    return ["Unable to check bulletin responses. Proceed with best judgment."];
+  }
+
+  let db: any;
+  try {
+    db = new Database(BULLETIN_DB_PATH, { readonly: true });
+  } catch {
+    return ["Unable to check bulletin responses. Proceed with best judgment."];
+  }
+
+  try {
+    for (let i = 0; i < 18; i++) {
+      await new Promise((r) => setTimeout(r, 10000));
+      const row = db.prepare("SELECT status, resolution FROM bulletins WHERE id = ?").get(bulletinId) as any;
+      if (row?.status === "closed") break;
+    }
+
+    // 5. Read responses
+    const responses = db.prepare(
+      "SELECT agent_id, body, position, reservations FROM bulletin_responses WHERE bulletin_id = ? ORDER BY created_at"
+    ).all(bulletinId) as any[];
+
+    if (responses.length === 0) {
+      return ["No agents responded. Proceed with your best judgment."];
+    }
+
+    // 6. Synthesize answers
+    const synthesized = responses.map((r: any) => {
+      const pos = r.position === "oppose" ? "OPPOSES" : r.position === "partial" ? "PARTIAL" : "AGREES";
+      return `${r.agent_id} (${pos}): ${r.body}${r.reservations ? ` [reservations: ${r.reservations}]` : ""}`;
+    }).join("\n\n");
+
+    return [synthesized];
+  } finally {
+    db.close();
+  }
+}
+
+const questionLog: Array<{ question: string; answers: string[]; timestamp: string }> = [];
+
+function buildCanUseTool(workerName: string): ((toolName: string, input: Record<string, unknown>, options: any) => Promise<any>) | undefined {
+  if (workerName === "plan" || workerName === "check") {
+    return createCanUseTool({
+      deny: ["Write", "Edit"],
+      allowWritePaths: workerName === "plan" ? ["docs/plans/"] : [],
+      onAskUserQuestion: bulletinAskHandler,
+      questionLog,
+    });
+  }
+
+  if (workerName === "execute" || workerName === "act") {
+    return createCanUseTool({
+      onAskUserQuestion: bulletinAskHandler,
+      questionLog,
+    });
+  }
+
+  return undefined;
+}
+
+// --- Worktree isolation ---
+
+function createWorktree(cwd: string, workerName: string, jobId: string): string {
+  const worktreePath = `/tmp/openagent-${workerName}-${jobId}`;
+  try {
+    execSyncChild(`git worktree add "${worktreePath}" HEAD`, { cwd, encoding: "utf-8" });
+  } catch {
+    return cwd;
+  }
+  return worktreePath;
+}
+
+function cleanupWorktree(worktreePath: string, realCwd: string, workerName: string): void {
+  if (!worktreePath.startsWith("/tmp/openagent-")) return;
+
+  // Only plan preserves docs/plans/*.md — check preserves nothing
+  if (workerName === "plan") {
+    const planDir = path.join(worktreePath, "docs", "plans");
+    const realPlanDir = path.join(realCwd, "docs", "plans");
+    try {
+      if (fs.existsSync(planDir)) {
+        fs.mkdirSync(realPlanDir, { recursive: true });
+        for (const file of fs.readdirSync(planDir)) {
+          if (file.endsWith(".md")) {
+            const src = path.join(planDir, file);
+            const dest = path.join(realPlanDir, file);
+            const srcStat = fs.statSync(src);
+            try {
+              const destStat = fs.statSync(dest);
+              if (srcStat.mtimeMs > destStat.mtimeMs) {
+                fs.copyFileSync(src, dest);
+              }
+            } catch {
+              fs.copyFileSync(src, dest);
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // Remove worktree
+  try {
+    execSyncChild(`git worktree remove "${worktreePath}" --force`, { cwd: realCwd, encoding: "utf-8" });
+  } catch {
+    try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
+    try { execSyncChild(`git worktree prune`, { cwd: realCwd, encoding: "utf-8" }); } catch {}
+  }
+}
+
 async function main() {
   // Handle classify worker (different args)
   if (worker === "classify") {
@@ -123,11 +324,7 @@ async function main() {
     try {
       const result = await resume(sessionId, answer);
       if (jobDir) {
-        fs.mkdirSync(jobDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(jobDir, "resume.json"),
-          JSON.stringify(result, null, 2),
-        );
+        writeResult(path.join(jobDir, "resume.json"), JSON.stringify(result, null, 2));
       }
       console.log(JSON.stringify(result));
     } catch (err) {
@@ -156,14 +353,28 @@ async function main() {
 
   const context = loadContext(jobDir, worker);
 
+  let effectiveCwd = cwd;
+  let worktreePath: string | undefined;
+
+  // Plan and check run in worktrees for isolation
+  if (worker === "plan" || worker === "check") {
+    const jobId = jobDir?.split("/").pop() ?? `${worker}-${Date.now()}`;
+    worktreePath = createWorktree(cwd, worker, jobId);
+    effectiveCwd = worktreePath;
+  }
+
   try {
-    const result = await fn({ task, cwd, context });
+    const canUseTool = buildCanUseTool(worker);
+    const result = await fn({ task, cwd: effectiveCwd, context, canUseTool });
 
     if (jobDir) {
-      fs.mkdirSync(jobDir, { recursive: true });
+      writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(result, null, 2));
+    }
+
+    if (jobDir && questionLog.length > 0) {
       fs.writeFileSync(
-        path.join(jobDir, `${worker}.json`),
-        JSON.stringify(result, null, 2),
+        path.join(jobDir, "questions.json"),
+        JSON.stringify(questionLog, null, 2),
       );
     }
 
@@ -181,15 +392,15 @@ async function main() {
     };
 
     if (jobDir) {
-      fs.mkdirSync(jobDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(jobDir, `${worker}.json`),
-        JSON.stringify(errorResult, null, 2),
-      );
+      writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(errorResult, null, 2));
     }
 
     console.log(JSON.stringify(errorResult));
     process.exit(1);
+  } finally {
+    if (worktreePath && worktreePath !== cwd) {
+      cleanupWorktree(worktreePath, cwd, worker);
+    }
   }
 }
 

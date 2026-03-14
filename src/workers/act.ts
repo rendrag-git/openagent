@@ -12,5 +12,6 @@ export async function act(request: ActRequest): Promise<TaskResult> {
     onQuestion: request.onQuestion,
     onProgress: request.onProgress,
     includeDiff: request.includeDiff ?? true,  // act defaults to including diff
+    canUseTool: request.canUseTool,
   });
 }

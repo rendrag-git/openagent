@@ -6,6 +6,10 @@ export interface WorkerProfile {
   systemPromptAppend: string;
   settingSources: string[];
   maxTurns: number;
+  /** Tools to deny via canUseTool (not in allowedTools, callback denies them). */
+  denyTools?: string[];
+  /** Allow Write to these path prefixes (only when Write is in denyTools). */
+  allowWritePaths?: string[];
 }
 
 // --- Questions & Progress ---
@@ -40,6 +44,7 @@ export interface TaskContext {
   onQuestion?: (question: Question) => Promise<string>;
   onProgress?: (event: ProgressEvent) => void;
   includeDiff?: boolean;
+  canUseTool?: (toolName: string, input: Record<string, unknown>, options: any) => Promise<any>;
 }
 
 export interface PlanRequest extends TaskContext {

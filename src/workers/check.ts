@@ -16,5 +16,6 @@ export async function check(request: CheckRequest): Promise<TaskResult> {
     onQuestion: request.onQuestion,
     onProgress: request.onProgress,
     includeDiff: false,  // check doesn't produce diffs
+    canUseTool: request.canUseTool,
   });
 }
