@@ -6,10 +6,6 @@ export interface CanUseToolOptions {
   /** Tools to always deny. */
   deny?: string[];
 
-  /** Allow Write tool for paths containing these substrings (e.g., "docs/plans/").
-   *  Only applies if "Write" is in the deny list. */
-  allowWritePaths?: string[];
-
   /** Handler for AskUserQuestion interception.
    *  Receives the tool input, returns an array of answer strings. */
   onAskUserQuestion?: (input: Record<string, unknown>) => Promise<string[]>;
@@ -31,7 +27,6 @@ type CanUseToolFn = (
 export function createCanUseTool(opts: CanUseToolOptions): CanUseToolFn {
   const allow = new Set(opts.allow ?? []);
   const deny = new Set(opts.deny ?? []);
-  const allowWritePaths = opts.allowWritePaths ?? [];
 
   return async (toolName, input, _options): Promise<PermissionResult> => {
     // 1. AskUserQuestion interception
@@ -58,14 +53,8 @@ export function createCanUseTool(opts: CanUseToolOptions): CanUseToolFn {
       };
     }
 
-    // 2. Explicit deny list (with path-based Write exceptions)
+    // 2. Explicit deny list
     if (deny.has(toolName)) {
-      if (toolName === "Write" && allowWritePaths.length > 0) {
-        const filePath = String((input as any).file_path ?? "");
-        if (allowWritePaths.some((p) => filePath.includes(p)) && filePath.endsWith(".md")) {
-          return { behavior: "allow" };
-        }
-      }
       return { behavior: "deny", message: `${toolName} is blocked in this worker profile.` };
     }
 

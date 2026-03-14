@@ -233,10 +233,16 @@ async function bulletinAskHandler(input: Record<string, unknown>): Promise<strin
 const questionLog: Array<{ question: string; answers: string[]; timestamp: string }> = [];
 
 function buildCanUseTool(workerName: string): ((toolName: string, input: Record<string, unknown>, options: any) => Promise<any>) | undefined {
-  if (workerName === "plan" || workerName === "check") {
+  if (workerName === "plan") {
+    return createCanUseTool({
+      onAskUserQuestion: bulletinAskHandler,
+      questionLog,
+    });
+  }
+
+  if (workerName === "check") {
     return createCanUseTool({
       deny: ["Write", "Edit"],
-      allowWritePaths: workerName === "plan" ? ["docs/plans/"] : [],
       onAskUserQuestion: bulletinAskHandler,
       questionLog,
     });
@@ -258,8 +264,8 @@ function createWorktree(cwd: string, workerName: string, jobId: string): string 
   const worktreePath = `/tmp/openagent-${workerName}-${jobId}`;
   try {
     execSyncChild(`git worktree add "${worktreePath}" HEAD`, { cwd, encoding: "utf-8" });
-  } catch {
-    return cwd;
+  } catch (err) {
+    throw new Error(`Failed to create worktree for ${workerName}: ${err}`);
   }
   return worktreePath;
 }

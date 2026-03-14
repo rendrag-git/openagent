@@ -15,24 +15,6 @@ describe("createCanUseTool", () => {
     assert.equal(result.behavior, "deny");
   });
 
-  it("allows Write to docs/plans/*.md", async () => {
-    const canUseTool = createCanUseTool({
-      deny: ["Write", "Edit"],
-      allowWritePaths: ["docs/plans/"],
-    });
-    const result = await canUseTool("Write", { file_path: "/home/ubuntu/projects/openagent/docs/plans/2026-03-13-design.md", content: "# Plan" }, { signal: new AbortController().signal, toolUseID: "t3" } as any);
-    assert.equal(result.behavior, "allow");
-  });
-
-  it("denies Write to src/ even with allowWritePaths set", async () => {
-    const canUseTool = createCanUseTool({
-      deny: ["Write", "Edit"],
-      allowWritePaths: ["docs/plans/"],
-    });
-    const result = await canUseTool("Write", { file_path: "/home/ubuntu/projects/openagent/src/foo.ts", content: "x" }, { signal: new AbortController().signal, toolUseID: "t4" } as any);
-    assert.equal(result.behavior, "deny");
-  });
-
   it("denies unlisted tools by default", async () => {
     const canUseTool = createCanUseTool({ allow: ["Read"] });
     const result = await canUseTool("SomeRandomTool", {}, { signal: new AbortController().signal, toolUseID: "t5" } as any);

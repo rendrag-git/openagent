@@ -8,8 +8,6 @@ export interface WorkerProfile {
   maxTurns: number;
   /** Tools to deny via canUseTool (not in allowedTools, callback denies them). */
   denyTools?: string[];
-  /** Allow Write to these path prefixes (only when Write is in denyTools). */
-  allowWritePaths?: string[];
 }
 
 // --- Questions & Progress ---

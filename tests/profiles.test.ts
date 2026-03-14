@@ -77,13 +77,8 @@ describe("profiles", () => {
     assert.equal(getProfile("unknown"), undefined);
   });
 
-  it("plan profile has denyTools", () => {
-    assert.ok(PROFILES.plan.denyTools?.includes("Write"));
-    assert.ok(PROFILES.plan.denyTools?.includes("Edit"));
-  });
-
-  it("plan profile has allowWritePaths", () => {
-    assert.ok(PROFILES.plan.allowWritePaths?.includes("docs/plans/"));
+  it("plan profile has no denyTools (worktree is the sandbox)", () => {
+    assert.equal(PROFILES.plan.denyTools, undefined);
   });
 
   it("check profile has denyTools", () => {

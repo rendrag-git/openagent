@@ -16,8 +16,6 @@ export const PROFILES: Record<string, WorkerProfile> = {
       QUESTION_ROUTING,
     settingSources: ["project"],
     maxTurns: 30,
-    denyTools: ["Write", "Edit"],
-    allowWritePaths: ["docs/plans/"],
   },
   execute: {
     allowedTools: ["Read", "Edit", "Write", "Bash", "Glob", "Grep", "Agent"],
