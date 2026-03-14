@@ -2,7 +2,7 @@
 
 export interface WorkerProfile {
   allowedTools: string[];
-  permissionMode: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  permissionMode: "default" | "plan" | "acceptEdits" | "bypassPermissions" | "dontAsk";
   systemPromptAppend: string;
   settingSources: string[];
   maxTurns: number;

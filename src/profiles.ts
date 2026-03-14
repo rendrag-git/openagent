@@ -7,7 +7,7 @@ const QUESTION_ROUTING =
 export const PROFILES: Record<string, WorkerProfile> = {
   plan: {
     allowedTools: ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Agent"],
-    permissionMode: "plan",
+    permissionMode: "bypassPermissions",
     systemPromptAppend:
       "You are exploring a codebase and producing a plan. " +
       "You are READ-ONLY. Do NOT create, modify, or delete any files. " +
