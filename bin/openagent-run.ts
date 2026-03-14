@@ -23,7 +23,7 @@ const cwd = args.cwd;
 const jobDir = args["job-dir"];
 
 if (!worker || !task || !cwd) {
-  console.error("Usage: openagent-run --worker <plan|execute|check|act> --task <task> --cwd <cwd> --job-dir <dir>");
+  console.error("Usage: openagent-run --worker <plan|execute|check|act|classify|resume> --task <task> --cwd <cwd> --job-dir <dir>");
   process.exit(1);
 }
 
@@ -65,10 +65,92 @@ const WORKERS: Record<string, (a: { task: string; cwd: string; context?: string 
   act: (a) => act({ issues: a.task, cwd: a.cwd, context: a.context, includeDiff: true }),
 };
 
+// --- Classify worker (Haiku domain classifier) ---
+
+async function classifyQuestion(task: string, routingJson: string): Promise<{ routeKey: string }> {
+  const { createSession } = await import("../src/index.ts");
+
+  let routeKeys: string[];
+  try {
+    const routing = JSON.parse(routingJson);
+    routeKeys = Object.keys(routing.routes ?? routing);
+  } catch {
+    return { routeKey: "default" };
+  }
+
+  const prompt =
+    `Classify this question into exactly ONE of these categories: ${routeKeys.join(", ")}\n\n` +
+    `Question: "${task}"\n\n` +
+    `Reply with ONLY the category name, nothing else.`;
+
+  try {
+    const result = await createSession({
+      prompt,
+      cwd: "/tmp",
+      overrides: {
+        maxTurns: 1,
+        allowedTools: [],
+      },
+      systemPrompt: "You are a classifier. Reply with exactly one word — the category name.",
+    });
+
+    const key = result.output.trim().toLowerCase().replace(/[^a-z_-]/g, "");
+    return { routeKey: routeKeys.includes(key) ? key : "default" };
+  } catch {
+    return { routeKey: "default" };
+  }
+}
+
 async function main() {
+  // Handle classify worker (different args)
+  if (worker === "classify") {
+    const routingJson = args.routing ?? "{}";
+    const result = await classifyQuestion(task, routingJson);
+    console.log(JSON.stringify(result));
+    process.exit(0);
+  }
+
+  // Handle resume worker (different args)
+  if (worker === "resume") {
+    const sessionId = args["session-id"];
+    const answer = args.answer ?? args.task;
+    if (!sessionId) {
+      console.error("resume worker requires --session-id <id> and --answer <text>");
+      process.exit(1);
+    }
+
+    const { resume } = await import("../src/index.ts");
+    try {
+      const result = await resume(sessionId, answer);
+      if (jobDir) {
+        fs.mkdirSync(jobDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(jobDir, "resume.json"),
+          JSON.stringify(result, null, 2),
+        );
+      }
+      console.log(JSON.stringify(result));
+    } catch (err) {
+      const errorResult = {
+        success: false,
+        output: err instanceof Error ? err.message : String(err),
+        filesChanged: [],
+        questions: [],
+        sessionId: "",
+        stopReason: "error",
+        costUsd: 0,
+        usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+      };
+      console.log(JSON.stringify(errorResult));
+      process.exit(1);
+    }
+    process.exit(0);
+  }
+
+  // Existing worker handling
   const fn = WORKERS[worker];
   if (!fn) {
-    console.error(`Unknown worker: ${worker}. Must be plan, execute, check, or act.`);
+    console.error(`Unknown worker: ${worker}. Must be plan, execute, check, act, classify, or resume.`);
     process.exit(1);
   }
 
@@ -77,7 +159,6 @@ async function main() {
   try {
     const result = await fn({ task, cwd, context });
 
-    // Persist result to job directory
     if (jobDir) {
       fs.mkdirSync(jobDir, { recursive: true });
       fs.writeFileSync(

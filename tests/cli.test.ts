@@ -60,4 +60,34 @@ describe("openagent CLI", () => {
     const result = JSON.parse(output);
     assert.equal(typeof result.success, "boolean");
   });
+
+  it("classify worker returns a valid route key", () => {
+    const routingTable = JSON.stringify({
+      routes: {
+        architecture: ["dev", "soren"],
+        database: ["db", "dev"],
+        api: ["dev", "aws"],
+        default: ["dev"],
+      },
+    });
+    const output = execSync(
+      `${CLI} --worker classify --task "Which database adapter should we use for pagination?" --cwd /tmp --routing '${routingTable}'`,
+      { encoding: "utf-8", timeout: 60000 },
+    );
+    const result = JSON.parse(output);
+    assert.equal(typeof result.routeKey, "string");
+    assert.ok(
+      ["architecture", "database", "api", "default"].includes(result.routeKey),
+      `unexpected route key: ${result.routeKey}`,
+    );
+  });
+
+  it("resume worker requires session-id", () => {
+    try {
+      execSync(`${CLI} --worker resume --task "ignored" --cwd /tmp`, { encoding: "utf-8" });
+      assert.fail("should exit non-zero");
+    } catch (err: any) {
+      assert.ok(err.stderr.includes("--session-id") || err.stdout.includes("--session-id"));
+    }
+  });
 });
