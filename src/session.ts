@@ -62,7 +62,6 @@ export function buildSessionOptions(input: BuildInput): SDKQueryInput {
       cwd: input.cwd,
       ...(allowedTools && { allowedTools }),
       ...(permissionMode && { permissionMode }),
-      ...(permissionMode === "bypassPermissions" && { allowDangerouslySkipPermissions: true }),
       ...(maxTurns && { maxTurns }),
       ...(settingSources && { settingSources }),
       ...(systemPromptAppend && {
