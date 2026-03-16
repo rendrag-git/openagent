@@ -16,6 +16,7 @@ import {
   savePlanState,
   type PlanState,
 } from "../src/plan-feedback.ts";
+import { dispatchPlanInteraction } from "../src/plan-feedback-dispatch.ts";
 import {
   getWorkflowStatusForInteraction,
   parseStructuredPlanInteraction,
@@ -457,6 +458,12 @@ async function persistStructuredPlanInteraction(
 
   await routePlanInteraction(jobDir, parsed.interaction.interactionId, {
     threadId: jobDir,
+  });
+
+  await dispatchPlanInteraction(jobDir, parsed.interaction.interactionId, {
+    classifyQuestion,
+    loadRoutingTable,
+    bulletinPostCli: BULLETIN_POST_CLI,
   });
 
   throw new ParkSession(

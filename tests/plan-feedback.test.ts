@@ -47,6 +47,7 @@ describe("plan-feedback", () => {
     assert.equal(state.jobId, JOB_ID);
     assert.ok(fs.existsSync(paths.eventsDir));
     assert.ok(fs.existsSync(paths.interactionsDir));
+    assert.ok(fs.existsSync(paths.dispatchesDir));
     assert.ok(fs.existsSync(paths.designSectionsDir));
     assert.ok(fs.existsSync(paths.approachesDir));
     assert.ok(fs.existsSync(paths.specReviewDir));

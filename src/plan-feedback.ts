@@ -277,9 +277,30 @@ export interface PlanFeedbackPaths {
   sessions: string;
   eventsDir: string;
   interactionsDir: string;
+  dispatchesDir: string;
   designSectionsDir: string;
   approachesDir: string;
   specReviewDir: string;
+}
+
+export type DispatchStatus =
+  | "pending"
+  | "sent"
+  | "awaiting_external_response"
+  | "failed";
+
+export interface DispatchArtifact {
+  schemaVersion: typeof PLAN_FEEDBACK_SCHEMA_VERSION;
+  dispatchId: string;
+  jobId: string;
+  interactionId: string;
+  transport: RoutingTransport;
+  action: string;
+  status: DispatchStatus;
+  target: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
 }
 
 function now(): string {
@@ -310,6 +331,7 @@ export function getPlanFeedbackPaths(jobDir: string): PlanFeedbackPaths {
     sessions: path.join(jobDir, "sessions.json"),
     eventsDir: path.join(jobDir, "events"),
     interactionsDir: path.join(jobDir, "interactions"),
+    dispatchesDir: path.join(jobDir, "dispatches"),
     designSectionsDir: path.join(jobDir, "design-sections"),
     approachesDir: path.join(jobDir, "approaches"),
     specReviewDir: path.join(jobDir, "spec-review"),
@@ -321,6 +343,7 @@ export async function ensurePlanFeedbackDirs(jobDir: string): Promise<PlanFeedba
   await Promise.all([
     fs.mkdir(paths.eventsDir, { recursive: true }),
     fs.mkdir(paths.interactionsDir, { recursive: true }),
+    fs.mkdir(paths.dispatchesDir, { recursive: true }),
     fs.mkdir(paths.designSectionsDir, { recursive: true }),
     fs.mkdir(paths.approachesDir, { recursive: true }),
     fs.mkdir(paths.specReviewDir, { recursive: true }),
@@ -557,6 +580,63 @@ export async function listPlanEvents(jobDir: string): Promise<Array<PlanEvent<un
         const timeOrder = a.createdAt.localeCompare(b.createdAt);
         return timeOrder !== 0 ? timeOrder : a.eventId.localeCompare(b.eventId);
       });
+  } catch {
+    return [];
+  }
+}
+
+export function createDispatchArtifact(
+  jobId: string,
+  input: Omit<DispatchArtifact, "schemaVersion" | "jobId" | "createdAt" | "updatedAt"> &
+    Partial<Pick<DispatchArtifact, "createdAt" | "updatedAt">>,
+): DispatchArtifact {
+  const timestamp = input.createdAt ?? now();
+  return {
+    ...input,
+    schemaVersion: PLAN_FEEDBACK_SCHEMA_VERSION,
+    jobId,
+    createdAt: timestamp,
+    updatedAt: input.updatedAt ?? timestamp,
+  };
+}
+
+export async function saveDispatchArtifact(
+  jobDir: string,
+  artifact: DispatchArtifact,
+): Promise<void> {
+  await ensurePlanFeedbackDirs(jobDir);
+  const filePath = path.join(
+    getPlanFeedbackPaths(jobDir).dispatchesDir,
+    `${artifact.dispatchId}.json`,
+  );
+  await writeJson(filePath, {
+    ...artifact,
+    schemaVersion: PLAN_FEEDBACK_SCHEMA_VERSION,
+    updatedAt: artifact.updatedAt ?? now(),
+  });
+}
+
+export async function loadDispatchArtifact(
+  jobDir: string,
+  dispatchId: string,
+): Promise<DispatchArtifact | null> {
+  return readJson<DispatchArtifact>(
+    path.join(getPlanFeedbackPaths(jobDir).dispatchesDir, `${dispatchId}.json`),
+  );
+}
+
+export async function listDispatchArtifacts(jobDir: string): Promise<DispatchArtifact[]> {
+  const { dispatchesDir } = getPlanFeedbackPaths(jobDir);
+  try {
+    const entries = await fs.readdir(dispatchesDir);
+    const items = await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map((entry) => readJson<DispatchArtifact>(path.join(dispatchesDir, entry))),
+    );
+    return items
+      .filter((item): item is DispatchArtifact => Boolean(item))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   } catch {
     return [];
   }

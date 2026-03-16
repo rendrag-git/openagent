@@ -51,22 +51,28 @@ export {
   createInteraction,
   createPlanEvent,
   createPlanState,
+  createDispatchArtifact,
   createSessionBindingsFile,
   ensurePlanFeedbackDirs,
   getPlanFeedbackPaths,
   initializePlanFeedbackJob,
+  listDispatchArtifacts,
   listInteractions,
   listOpenInteractions,
   listPlanEvents,
+  loadDispatchArtifact,
   loadInteraction,
   loadPlanState,
   loadSessionBindings,
+  saveDispatchArtifact,
   saveInteraction,
   savePlanState,
   saveSessionBindings,
   upsertSessionBinding,
 } from "./plan-feedback.ts";
 export type {
+  DispatchArtifact,
+  DispatchStatus,
   EventActorKind,
   ImplementationPlanState,
   InteractionKind,
@@ -121,3 +127,5 @@ export type {
   RouteInteractionOptions,
   RoutedInteractionResult,
 } from "./plan-feedback-routing.ts";
+
+export { dispatchPlanInteraction } from "./plan-feedback-dispatch.ts";
