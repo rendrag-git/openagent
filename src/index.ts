@@ -108,3 +108,9 @@ export {
   parseStructuredPlanInteraction,
 } from "./plan-feedback-interactions.ts";
 export type { ParsedPlanInteraction } from "./plan-feedback-interactions.ts";
+
+export {
+  markResumeFailure,
+  recordInteractionAnswer,
+} from "./plan-feedback-resume.ts";
+export type { RecordedInteractionAnswer } from "./plan-feedback-resume.ts";

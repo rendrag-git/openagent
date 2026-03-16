@@ -20,6 +20,10 @@ import {
   getWorkflowStatusForInteraction,
   parseStructuredPlanInteraction,
 } from "../src/plan-feedback-interactions.ts";
+import {
+  markResumeFailure,
+  recordInteractionAnswer,
+} from "../src/plan-feedback-resume.ts";
 import { ParkSession } from "../src/session.ts";
 
 // --- Parse args ---
@@ -106,6 +110,7 @@ async function finalizePlanRunState(
   jobDir: string,
   jobId: string,
   result: TaskResult,
+  resultPath: string = "plan.json",
 ): Promise<void> {
   const state = (await loadPlanState(jobDir)) ?? await initializePlanFeedbackJob(jobDir, jobId);
   const plannerStatus =
@@ -138,7 +143,7 @@ async function finalizePlanRunState(
       ...state.planner,
       sdkSessionId: result.sessionId || state.planner.sdkSessionId,
       sdkSessionStatus: plannerStatus,
-      lastPlannerResultPath: "plan.json",
+      lastPlannerResultPath: resultPath,
     },
     updatedAt: new Date().toISOString(),
   };
@@ -183,7 +188,7 @@ async function finalizePlanRunState(
       jobDir,
       createPlanEvent(jobId, "plan.completed", {
         worker: "plan",
-        outputPath: "plan.json",
+        outputPath: resultPath,
       }),
     );
   }
@@ -581,13 +586,39 @@ async function main() {
     }
 
     const { resume } = await import("../src/index.ts");
+    const parked = await import("../src/feedback.ts").then((mod) => mod.loadParkedSession(sessionId));
+    const effectiveJobDir = jobDir ?? parked?.threadId;
     try {
+      if (effectiveJobDir && parked?.interactionId) {
+        await recordInteractionAnswer(effectiveJobDir, parked.interactionId, answer, {
+          kind: "agent",
+          id: "orchestrator",
+        });
+      }
+
       const result = await resume(sessionId, answer);
-      if (jobDir) {
-        writeResult(path.join(jobDir, "resume.json"), JSON.stringify(result, null, 2));
+      if (effectiveJobDir) {
+        writeResult(path.join(effectiveJobDir, "resume.json"), JSON.stringify(result, null, 2));
+      }
+      if (effectiveJobDir) {
+        await finalizePlanRunState(
+          effectiveJobDir,
+          parked?.jobId ?? getJobId(effectiveJobDir, "plan"),
+          result,
+          "resume.json",
+        );
       }
       console.log(JSON.stringify(result));
     } catch (err) {
+      if (effectiveJobDir && parked?.interactionId && err instanceof Error) {
+        await markResumeFailure(
+          effectiveJobDir,
+          parked.interactionId,
+          err,
+          false,
+        );
+      }
+
       const errorResult = {
         success: false,
         output: err instanceof Error ? err.message : String(err),
