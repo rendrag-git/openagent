@@ -10,10 +10,14 @@ import type {
 
 export class ParkSession extends Error {
   question: Question;
-  constructor(question: Question) {
+  sessionId: string;
+  metadata?: Record<string, unknown>;
+  constructor(question: Question, sessionId: string = "", metadata?: Record<string, unknown>) {
     super(`Session parked: ${question.text}`);
     this.name = "ParkSession";
     this.question = question;
+    this.sessionId = sessionId;
+    this.metadata = metadata;
   }
 }
 

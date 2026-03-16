@@ -96,6 +96,8 @@ export interface ParkedSession {
   question: Question;
   originalFrom: string;
   threadId: string;
+  jobId?: string;
+  interactionId?: string;
   taskContext: TaskContext;
   createdAt: string;
 }

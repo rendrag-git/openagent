@@ -1,4 +1,5 @@
 import type { WorkerProfile } from "./types.ts";
+import { formatPlanInteractionInstruction } from "./plan-feedback-interactions.ts";
 
 const QUESTION_ROUTING =
   "If you are uncertain about a requirement, design decision, or approach — ask. " +
@@ -13,6 +14,7 @@ export const PROFILES: Record<string, WorkerProfile> = {
       "When you need clarification on requirements, design decisions, or technical approach, use AskUserQuestion. " +
       "You may write design documents to docs/plans/ only. " +
       "Use the superpowers:brainstorming skill to explore intent, requirements, and design. " +
+      formatPlanInteractionInstruction() + " " +
       QUESTION_ROUTING,
     settingSources: ["project"],
     maxTurns: 30,

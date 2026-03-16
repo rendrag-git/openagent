@@ -106,7 +106,12 @@ export async function runSession(input: RunSessionInput): Promise<TaskResult> {
       }
     }
   } catch (err) {
-    if (err instanceof ParkSession) throw err;
+    if (err instanceof ParkSession) {
+      if (!err.sessionId && sessionId) {
+        err.sessionId = sessionId;
+      }
+      throw err;
+    }
     output = err instanceof Error ? err.message : String(err);
     stopReason = "error";
   }

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createCanUseTool } from "../src/can-use-tool.ts";
+import { ParkSession } from "../src/session.ts";
 
 describe("createCanUseTool", () => {
   it("allows tools in the allow list", async () => {
@@ -57,5 +58,23 @@ describe("createCanUseTool", () => {
     assert.equal(questionLog.length, 1);
     assert.equal(questionLog[0].question, "Which DB?");
     assert.deepEqual(questionLog[0].answers, ["PostgreSQL"]);
+  });
+
+  it("propagates parking errors from AskUserQuestion handlers", async () => {
+    const canUseTool = createCanUseTool({
+      onAskUserQuestion: async () => {
+        throw new ParkSession({
+          id: "pi_123",
+          text: "Choose implementation approach",
+          timestamp: "2026-03-16T18:05:10.000Z",
+          answered: false,
+        });
+      },
+    });
+
+    await assert.rejects(
+      canUseTool("AskUserQuestion", { questions: [{ question: "ignored" }] }, { signal: new AbortController().signal, toolUseID: "t8" } as any),
+      (err: unknown) => err instanceof ParkSession,
+    );
   });
 });

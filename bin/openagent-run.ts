@@ -3,16 +3,24 @@ import path from "node:path";
 import { execSync as execSyncChild } from "node:child_process";
 import { execSync as execSyncBulletin } from "node:child_process";
 import { plan, execute, check, act } from "../src/index.ts";
+import { parkSession } from "../src/feedback.ts";
 import { createCanUseTool } from "../src/can-use-tool.ts";
 import type { TaskResult } from "../src/types.ts";
 import {
   appendPlanEvent,
   createPlanEvent,
   initializePlanFeedbackJob,
+  loadInteraction,
   loadPlanState,
+  saveInteraction,
   savePlanState,
   type PlanState,
 } from "../src/plan-feedback.ts";
+import {
+  getWorkflowStatusForInteraction,
+  parseStructuredPlanInteraction,
+} from "../src/plan-feedback-interactions.ts";
+import { ParkSession } from "../src/session.ts";
 
 // --- Parse args ---
 
@@ -135,6 +143,15 @@ async function finalizePlanRunState(
     updatedAt: new Date().toISOString(),
   };
 
+  if (result.stopReason === "parked" && updated.activeInteractionId) {
+    const interaction = await loadInteraction(jobDir, updated.activeInteractionId);
+    if (interaction && !interaction.resume.sdkSessionId) {
+      interaction.resume.sdkSessionId = result.sessionId;
+      interaction.updatedAt = new Date().toISOString();
+      await saveInteraction(jobDir, interaction);
+    }
+  }
+
   await savePlanState(jobDir, updated);
 
   await appendPlanEvent(
@@ -170,6 +187,41 @@ async function finalizePlanRunState(
       }),
     );
   }
+}
+
+async function buildParkedResult(
+  err: ParkSession,
+  workerName: string,
+  cwd: string,
+  jobDir?: string,
+  jobId?: string,
+): Promise<TaskResult> {
+  const result: TaskResult = {
+    success: false,
+    output: `Planner parked for feedback: ${err.question.text}`,
+    filesChanged: [],
+    questions: [err.question],
+    sessionId: err.sessionId,
+    stopReason: "parked",
+    parkedQuestion: err.question,
+    costUsd: 0,
+    usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+  };
+
+  if (jobDir) {
+    await parkSession({
+      sessionId: err.sessionId,
+      question: err.question,
+      originalFrom: workerName,
+      threadId: jobDir,
+      jobId,
+      interactionId: typeof err.metadata?.interactionId === "string" ? err.metadata.interactionId : undefined,
+      taskContext: { cwd },
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  return result;
 }
 
 // --- Load context from previous phase if available ---
@@ -360,10 +412,84 @@ async function bulletinAskHandler(input: Record<string, unknown>): Promise<strin
 
 const questionLog: Array<{ question: string; answers: string[]; timestamp: string }> = [];
 
-function buildCanUseTool(workerName: string): ((toolName: string, input: Record<string, unknown>, options: any) => Promise<any>) | undefined {
+async function persistStructuredPlanInteraction(
+  input: Record<string, unknown>,
+  workerName: string,
+  jobDir: string,
+  jobId: string,
+): Promise<never> {
+  const parsed = parseStructuredPlanInteraction(input, jobId);
+  if (!parsed) {
+    throw new Error("Expected a structured plan interaction but could not parse the request.");
+  }
+
+  await saveInteraction(jobDir, parsed.interaction);
+
+  const state = (await loadPlanState(jobDir)) ?? await initializePlanFeedbackJob(jobDir, jobId);
+  const updated: PlanState = {
+    ...state,
+    status: getWorkflowStatusForInteraction(parsed.interaction.kind, parsed.interaction.owner),
+    activeInteractionId: parsed.interaction.interactionId,
+    activeOwner: parsed.interaction.owner,
+    currentStep: parsed.currentStep,
+    updatedAt: new Date().toISOString(),
+  };
+  await savePlanState(jobDir, updated);
+
+  await appendPlanEvent(
+    jobDir,
+    createPlanEvent(jobId, "plan.interaction.requested", {
+      interaction: {
+        interactionId: parsed.interaction.interactionId,
+        kind: parsed.interaction.kind,
+        owner: parsed.interaction.owner,
+        request: parsed.interaction.request,
+        resume: parsed.interaction.resume,
+      },
+    }),
+  );
+
+  await appendPlanEvent(
+    jobDir,
+    createPlanEvent(jobId, "plan.interaction.routed", {
+      interactionId: parsed.interaction.interactionId,
+      routing: parsed.interaction.routing,
+      worker: workerName,
+    }),
+  );
+
+  throw new ParkSession(
+    {
+      id: parsed.interaction.interactionId,
+      text: parsed.interaction.request.title,
+      timestamp: new Date().toISOString(),
+      answered: false,
+    },
+    "",
+    {
+      interactionId: parsed.interaction.interactionId,
+      routing: parsed.interaction.routing,
+      kind: parsed.interaction.kind,
+    },
+  );
+}
+
+function buildCanUseTool(
+  workerName: string,
+  context: { jobDir?: string; jobId: string },
+): ((toolName: string, input: Record<string, unknown>, options: any) => Promise<any>) | undefined {
   if (workerName === "plan") {
     return createCanUseTool({
-      onAskUserQuestion: bulletinAskHandler,
+      onAskUserQuestion: async (input) => {
+        if (context.jobDir) {
+          const parsed = parseStructuredPlanInteraction(input, context.jobId);
+          if (parsed) {
+            await persistStructuredPlanInteraction(input, workerName, context.jobDir, context.jobId);
+          }
+        }
+
+        return bulletinAskHandler(input);
+      },
       questionLog,
     });
   }
@@ -502,7 +628,7 @@ async function main() {
   }
 
   try {
-    const canUseTool = buildCanUseTool(worker);
+    const canUseTool = buildCanUseTool(worker, { jobDir, jobId });
     const result = await fn({ task, cwd: effectiveCwd, context, canUseTool });
 
     if (jobDir) {
@@ -522,6 +648,21 @@ async function main() {
 
     console.log(JSON.stringify(result));
   } catch (err) {
+    if (err instanceof ParkSession) {
+      const parkedResult = await buildParkedResult(err, worker, effectiveCwd, jobDir, jobId);
+
+      if (jobDir) {
+        writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(parkedResult, null, 2));
+      }
+
+      if (jobDir && worker === "plan") {
+        await finalizePlanRunState(jobDir, jobId, parkedResult);
+      }
+
+      console.log(JSON.stringify(parkedResult));
+      process.exit(0);
+    }
+
     const errorResult = {
       success: false,
       output: err instanceof Error ? err.message : String(err),

@@ -101,3 +101,10 @@ export type {
   SessionStability,
   UserReviewStatus,
 } from "./plan-feedback.ts";
+
+export {
+  formatPlanInteractionInstruction,
+  getWorkflowStatusForInteraction,
+  parseStructuredPlanInteraction,
+} from "./plan-feedback-interactions.ts";
+export type { ParsedPlanInteraction } from "./plan-feedback-interactions.ts";
