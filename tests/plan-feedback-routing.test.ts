@@ -133,4 +133,51 @@ describe("plan-feedback routing", () => {
     assert.equal(interaction?.routing.threadId, "discord:thread:abc");
     assert.equal(interaction?.routing.discordMessageId, "discord-message-123");
   });
+
+  it("invalidates stale bindings instead of reusing them", async () => {
+    await initializePlanFeedbackJob(TEST_DIR, JOB_ID);
+    await saveSessionBindings(TEST_DIR, {
+      ...createSessionBindingsFile(JOB_ID),
+      bindings: {
+        pm: {
+          bindingId: "sb_pm_stale",
+          ownerId: "pm",
+          transport: "sessions_spawn",
+          sessionKey: "agent:pm:subagent:stale",
+          threadId: "thread:stale",
+          createdAt: "2026-03-16T18:00:00.000Z",
+          lastUsedAt: "2026-03-16T18:00:00.000Z",
+          status: "stale",
+          stability: "owned_child_session",
+        },
+      },
+    });
+    await saveInteraction(
+      TEST_DIR,
+      createInteraction(JOB_ID, {
+        interactionId: "pi_stale",
+        kind: "clarify_product",
+        status: "requested",
+        owner: { kind: "agent", id: "pm" },
+        routing: {
+          transport: "direct_session",
+          targetAgentId: "pm",
+        },
+        request: { title: "Clarify product requirement" },
+        response: null,
+        resolution: null,
+        resume: { mode: "sdk_resume", target: "openagent.plan", sdkSessionId: "sess_123" },
+        timeouts: { softSeconds: 900, hardSeconds: 3600 },
+      }),
+    );
+
+    const routed = await routePlanInteraction(TEST_DIR, "pi_stale");
+    const interaction = await loadInteraction(TEST_DIR, "pi_stale");
+    const events = await listPlanEvents(TEST_DIR);
+
+    assert.equal(routed.action, "establish_direct_session");
+    assert.equal(interaction?.routing.sessionBindingId ?? null, null);
+    assert.equal(events.some((event) => event.eventType === "plan.session.invalidated"), true);
+    assert.equal(events.some((event) => event.eventType === "plan.session.rebound"), false);
+  });
 });

@@ -10,7 +10,11 @@ import {
   saveInteraction,
   savePlanState,
 } from "../src/plan-feedback.ts";
-import { markResumeFailure, recordInteractionAnswer } from "../src/plan-feedback-resume.ts";
+import {
+  completeInteractionResolution,
+  markResumeFailure,
+  recordInteractionAnswer,
+} from "../src/plan-feedback-resume.ts";
 
 const TEST_DIR = "/tmp/openagent-test-plan-feedback-resume";
 const JOB_ID = "2026-03-16-resume-test";
@@ -25,7 +29,7 @@ describe("plan-feedback resume", () => {
     fs.rmSync(TEST_DIR, { recursive: true, force: true });
   });
 
-  it("records an interaction response, resolution, and resuming planner state", async () => {
+  it("records a response before resolving the interaction", async () => {
     await initializePlanFeedbackJob(TEST_DIR, JOB_ID, {
       status: "awaiting_pm_approach_decision",
     });
@@ -88,22 +92,90 @@ describe("plan-feedback resume", () => {
     assert.equal(recorded.response.parsed?.selectedOptionId, "b");
     assert.equal(recorded.resolution.nextAction, "resume_planner");
     assert.ok(interaction);
-    assert.equal(interaction!.status, "resolved");
+    assert.equal(interaction!.status, "response_recorded");
     assert.equal(interaction!.resolution?.plannerFeedback, "PM approved option b.");
     assert.ok(state);
-    assert.equal(state!.status, "running_planner");
-    assert.equal(state!.activeInteractionId, null);
+    assert.equal(state!.status, "awaiting_pm_approach_decision");
+    assert.equal(state!.activeInteractionId, "pi_001");
     assert.equal(state!.planner.sdkSessionStatus, "resuming");
   });
 
-  it("marks planner state failed when resume fails", async () => {
+  it("completes interaction resolution after a successful resume", async () => {
     await initializePlanFeedbackJob(TEST_DIR, JOB_ID, {
-      status: "running_planner",
+      status: "awaiting_pm_approach_decision",
     });
     await savePlanState(
       TEST_DIR,
       createPlanState(JOB_ID, {
-        status: "running_planner",
+        status: "awaiting_pm_approach_decision",
+        activeInteractionId: "pi_002",
+        activeOwner: { kind: "agent", id: "pm" },
+        planner: {
+          sdkSessionId: "sess_222",
+          sdkSessionStatus: "resuming",
+        },
+      }),
+    );
+    await saveInteraction(
+      TEST_DIR,
+      createInteraction(JOB_ID, {
+        interactionId: "pi_002",
+        kind: "approach_decision",
+        status: "response_recorded",
+        owner: { kind: "agent", id: "pm" },
+        routing: {
+          transport: "direct_session",
+          targetAgentId: "pm",
+        },
+        request: {
+          title: "Choose implementation approach",
+        },
+        response: {
+          receivedAt: "2026-03-16T18:00:00.000Z",
+          source: { kind: "agent", id: "pm" },
+          transport: "direct_session",
+          raw: "Approve option b",
+          parsed: { selectedOptionId: "b" },
+        },
+        resolution: {
+          resolvedAt: "2026-03-16T18:01:00.000Z",
+          plannerFeedback: "PM approved option b.",
+          nextAction: "resume_planner",
+          resumePayload: {
+            mode: "sdk_resume",
+            sdkSessionId: "sess_222",
+            answer: "PM approved option b.",
+          },
+        },
+        resume: {
+          mode: "sdk_resume",
+          target: "openagent.plan",
+          sdkSessionId: "sess_222",
+        },
+        timeouts: { softSeconds: 1800, hardSeconds: 3600 },
+      }),
+    );
+
+    await completeInteractionResolution(TEST_DIR, "pi_002");
+
+    const interaction = await loadInteraction(TEST_DIR, "pi_002");
+    const state = await loadPlanState(TEST_DIR);
+
+    assert.equal(interaction?.status, "resolved");
+    assert.equal(state?.status, "running_planner");
+    assert.equal(state?.activeInteractionId, null);
+  });
+
+  it("keeps the interaction retryable when resume fails", async () => {
+    await initializePlanFeedbackJob(TEST_DIR, JOB_ID, {
+      status: "awaiting_pm_clarification",
+    });
+    await savePlanState(
+      TEST_DIR,
+      createPlanState(JOB_ID, {
+        status: "awaiting_pm_clarification",
+        activeInteractionId: "pi_999",
+        activeOwner: { kind: "agent", id: "pm" },
         planner: {
           sdkSessionId: "sess_999",
           sdkSessionStatus: "resuming",
@@ -115,7 +187,7 @@ describe("plan-feedback resume", () => {
       createInteraction(JOB_ID, {
         interactionId: "pi_999",
         kind: "clarify_product",
-        status: "resolved",
+        status: "response_recorded",
         owner: { kind: "agent", id: "pm" },
         routing: {
           transport: "direct_session",
@@ -152,8 +224,11 @@ describe("plan-feedback resume", () => {
     await markResumeFailure(TEST_DIR, "pi_999", new Error("Session not found"), false);
 
     const state = await loadPlanState(TEST_DIR);
+    const interaction = await loadInteraction(TEST_DIR, "pi_999");
     assert.ok(state);
-    assert.equal(state!.status, "failed");
+    assert.equal(state!.status, "awaiting_pm_clarification");
+    assert.equal(state!.activeInteractionId, "pi_999");
     assert.equal(state!.planner.sdkSessionStatus, "failed");
+    assert.equal(interaction?.status, "response_recorded");
   });
 });

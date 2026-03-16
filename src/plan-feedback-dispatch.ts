@@ -14,6 +14,12 @@ interface DispatchDependencies {
   bulletinPostCli?: string;
 }
 
+export interface DispatchExecutionResult {
+  artifact: DispatchArtifact;
+  deliveryState: "awaiting_external_response" | "failed";
+  fallbackAnswer?: string;
+}
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -33,7 +39,7 @@ async function createBulletinDispatch(
   jobDir: string,
   interaction: PlanInteraction,
   deps: DispatchDependencies,
-): Promise<DispatchArtifact> {
+): Promise<DispatchExecutionResult> {
   const routingTable = deps.loadRoutingTable();
   const promptText = buildInteractionPrompt(interaction);
   const routeResult = await deps.classifyQuestion(promptText, JSON.stringify(routingTable));
@@ -104,14 +110,20 @@ async function createBulletinDispatch(
 
   await saveDispatchArtifact(jobDir, artifact);
 
-  return artifact;
+  return {
+    artifact,
+    deliveryState: status === "failed" ? "failed" : "awaiting_external_response",
+    fallbackAnswer: status === "failed"
+      ? "Advisory routing failed. Proceed with your best judgment."
+      : undefined,
+  };
 }
 
 async function createHandoffDispatch(
   jobDir: string,
   interaction: PlanInteraction,
   action: string,
-): Promise<DispatchArtifact> {
+): Promise<DispatchExecutionResult> {
   const artifact = createDispatchArtifact(interaction.jobId, {
     dispatchId: `pd_${interaction.interactionId}`,
     interactionId: interaction.interactionId,
@@ -130,7 +142,10 @@ async function createHandoffDispatch(
 
   await saveDispatchArtifact(jobDir, artifact);
 
-  return artifact;
+  return {
+    artifact,
+    deliveryState: "awaiting_external_response",
+  };
 }
 
 export async function dispatchPlanInteraction(
@@ -138,7 +153,7 @@ export async function dispatchPlanInteraction(
   interactionId: string,
   deps: DispatchDependencies,
   actionOverride?: string,
-): Promise<DispatchArtifact> {
+): Promise<DispatchExecutionResult> {
   const interaction = await loadInteraction(jobDir, interactionId);
   if (!interaction) {
     throw new Error(`Unknown interaction: ${interactionId}`);

@@ -97,7 +97,7 @@ export async function recordInteractionAnswer(
 
   interaction.response = response;
   interaction.resolution = resolution;
-  interaction.status = "resolved";
+  interaction.status = "response_recorded";
   interaction.updatedAt = receivedAt;
   await saveInteraction(jobDir, interaction);
 
@@ -109,11 +109,44 @@ export async function recordInteractionAnswer(
     }),
   );
 
+  const state = await loadPlanState(jobDir);
+  if (state) {
+    state.currentStep = {
+      kind: "resume_planner",
+      label: "Resuming planner with interaction feedback",
+    };
+    state.planner.sdkSessionStatus = "resuming";
+    state.updatedAt = receivedAt;
+    await savePlanState(jobDir, state);
+  }
+
+  return {
+    interaction,
+    state,
+    response,
+    resolution,
+  };
+}
+
+export async function completeInteractionResolution(
+  jobDir: string,
+  interactionId: string,
+): Promise<void> {
+  const interaction = await loadInteraction(jobDir, interactionId);
+  if (!interaction || !interaction.resolution) {
+    throw new Error(`Interaction is not ready to resolve: ${interactionId}`);
+  }
+
+  const resolvedAt = now();
+  interaction.status = "resolved";
+  interaction.updatedAt = resolvedAt;
+  await saveInteraction(jobDir, interaction);
+
   await appendPlanEvent(
     jobDir,
     createPlanEvent(interaction.jobId, "plan.interaction.resolved", {
       interactionId,
-      resolution,
+      resolution: interaction.resolution,
     }),
   );
 
@@ -124,10 +157,9 @@ export async function recordInteractionAnswer(
     state.status = "running_planner";
     state.currentStep = {
       kind: "resume_planner",
-      label: "Resuming planner with interaction feedback",
+      label: "Planner resumed with interaction feedback",
     };
-    state.planner.sdkSessionStatus = "resuming";
-    state.updatedAt = receivedAt;
+    state.updatedAt = resolvedAt;
     await savePlanState(jobDir, state);
 
     await appendPlanEvent(
@@ -139,17 +171,10 @@ export async function recordInteractionAnswer(
           resumeStrategy: state.planner.resumeStrategy,
         },
         interactionId,
-        resumePayload: resolution.resumePayload,
+        resumePayload: interaction.resolution.resumePayload,
       }),
     );
   }
-
-  return {
-    interaction,
-    state,
-    response,
-    resolution,
-  };
 }
 
 export async function markResumeFailure(
@@ -164,8 +189,11 @@ export async function markResumeFailure(
 
   const state = await loadPlanState(jobDir);
   if (state) {
-    state.status = "failed";
     state.planner.sdkSessionStatus = "failed";
+    state.currentStep = {
+      kind: "resume_failed",
+      label: "Planner resume failed; interaction remains retryable",
+    };
     state.updatedAt = now();
     await savePlanState(jobDir, state);
   }

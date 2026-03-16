@@ -116,6 +116,7 @@ export {
 export type { ParsedPlanInteraction } from "./plan-feedback-interactions.ts";
 
 export {
+  completeInteractionResolution,
   markResumeFailure,
   recordInteractionAnswer,
 } from "./plan-feedback-resume.ts";

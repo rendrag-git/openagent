@@ -23,6 +23,7 @@ import {
 } from "../src/plan-feedback-interactions.ts";
 import { routePlanInteraction } from "../src/plan-feedback-routing.ts";
 import {
+  completeInteractionResolution,
   markResumeFailure,
   recordInteractionAnswer,
 } from "../src/plan-feedback-resume.ts";
@@ -424,7 +425,7 @@ async function persistStructuredPlanInteraction(
   workerName: string,
   jobDir: string,
   jobId: string,
-): Promise<never> {
+): Promise<string[] | never> {
   const parsed = parseStructuredPlanInteraction(input, jobId);
   if (!parsed) {
     throw new Error("Expected a structured plan interaction but could not parse the request.");
@@ -460,11 +461,44 @@ async function persistStructuredPlanInteraction(
     threadId: jobDir,
   });
 
-  await dispatchPlanInteraction(jobDir, parsed.interaction.interactionId, {
+  const dispatchResult = await dispatchPlanInteraction(jobDir, parsed.interaction.interactionId, {
     classifyQuestion,
     loadRoutingTable,
     bulletinPostCli: BULLETIN_POST_CLI,
   });
+
+  if (dispatchResult.deliveryState === "failed") {
+    const interaction = await loadInteraction(jobDir, parsed.interaction.interactionId);
+    if (interaction) {
+      interaction.status = "timed_out";
+      interaction.updatedAt = new Date().toISOString();
+      await saveInteraction(jobDir, interaction);
+    }
+
+    const failedState = await loadPlanState(jobDir);
+    if (failedState) {
+      failedState.activeInteractionId = null;
+      failedState.activeOwner = null;
+      failedState.status = "running_planner";
+      failedState.currentStep = {
+        kind: "dispatch_failed",
+        label: "Interaction dispatch failed; continuing inline",
+      };
+      failedState.updatedAt = new Date().toISOString();
+      await savePlanState(jobDir, failedState);
+    }
+
+    await appendPlanEvent(
+      jobDir,
+      createPlanEvent(jobId, "plan.interaction.timed_out", {
+        interactionId: parsed.interaction.interactionId,
+        reason: "dispatch_failed",
+        dispatchId: dispatchResult.artifact.dispatchId,
+      }),
+    );
+
+    return [dispatchResult.fallbackAnswer ?? "Feedback routing failed. Proceed with your best judgment."];
+  }
 
   throw new ParkSession(
     {
@@ -492,7 +526,7 @@ function buildCanUseTool(
         if (context.jobDir) {
           const parsed = parseStructuredPlanInteraction(input, context.jobId);
           if (parsed) {
-            await persistStructuredPlanInteraction(input, workerName, context.jobDir, context.jobId);
+            return persistStructuredPlanInteraction(input, workerName, context.jobDir, context.jobId);
           }
         }
 
@@ -600,6 +634,9 @@ async function main() {
       }
 
       const result = await resume(sessionId, answer);
+      if (effectiveJobDir && parked?.interactionId) {
+        await completeInteractionResolution(effectiveJobDir, parked.interactionId);
+      }
       if (effectiveJobDir) {
         writeResult(path.join(effectiveJobDir, "resume.json"), JSON.stringify(result, null, 2));
       }

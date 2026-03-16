@@ -70,6 +70,10 @@ function makeBindingId(ownerId: string): string {
   return `sb_${ownerId}_${randomUUID()}`;
 }
 
+function isReusableBinding(binding: SessionBinding | null | undefined): binding is SessionBinding {
+  return Boolean(binding && binding.status === "active");
+}
+
 export async function routePlanInteraction(
   jobDir: string,
   interactionId: string,
@@ -85,6 +89,31 @@ export async function routePlanInteraction(
   let binding = interaction.routing.targetAgentId
     ? sessions?.bindings[interaction.routing.targetAgentId] ?? null
     : null;
+
+  if (binding && !isReusableBinding(binding)) {
+    binding = {
+      ...binding,
+      status: "invalidated",
+      lastUsedAt: timestamp,
+    };
+    await upsertSessionBinding(jobDir, interaction.jobId, binding);
+    await appendPlanEvent(
+      jobDir,
+      createPlanEvent(interaction.jobId, "plan.session.invalidated", {
+        binding: {
+          bindingId: binding.bindingId,
+          ownerId: binding.ownerId,
+          transport: binding.transport,
+          sessionKey: binding.sessionKey,
+          threadId: binding.threadId,
+          stability: binding.stability,
+        },
+        reason: "binding_not_reusable",
+      }),
+    );
+    interaction.routing.sessionBindingId = null;
+    binding = null;
+  }
 
   if (options.bindSession) {
     const boundAt = options.bindSession.threadId ?? options.threadId ?? null;
@@ -115,7 +144,7 @@ export async function routePlanInteraction(
         },
       }),
     );
-  } else if (binding) {
+  } else if (isReusableBinding(binding)) {
     binding.lastUsedAt = timestamp;
     await upsertSessionBinding(jobDir, interaction.jobId, binding);
 
