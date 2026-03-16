@@ -20,6 +20,7 @@ import {
   getWorkflowStatusForInteraction,
   parseStructuredPlanInteraction,
 } from "../src/plan-feedback-interactions.ts";
+import { routePlanInteraction } from "../src/plan-feedback-routing.ts";
 import {
   markResumeFailure,
   recordInteractionAnswer,
@@ -454,14 +455,9 @@ async function persistStructuredPlanInteraction(
     }),
   );
 
-  await appendPlanEvent(
-    jobDir,
-    createPlanEvent(jobId, "plan.interaction.routed", {
-      interactionId: parsed.interaction.interactionId,
-      routing: parsed.interaction.routing,
-      worker: workerName,
-    }),
-  );
+  await routePlanInteraction(jobDir, parsed.interaction.interactionId, {
+    threadId: jobDir,
+  });
 
   throw new ParkSession(
     {

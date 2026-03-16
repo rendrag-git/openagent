@@ -114,3 +114,10 @@ export {
   recordInteractionAnswer,
 } from "./plan-feedback-resume.ts";
 export type { RecordedInteractionAnswer } from "./plan-feedback-resume.ts";
+
+export { routePlanInteraction } from "./plan-feedback-routing.ts";
+export type {
+  DispatchAction,
+  RouteInteractionOptions,
+  RoutedInteractionResult,
+} from "./plan-feedback-routing.ts";
