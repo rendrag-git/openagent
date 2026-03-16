@@ -1,6 +1,5 @@
 import fs from "node:fs";
 import path from "node:path";
-import { execSync as execSyncChild } from "node:child_process";
 import { execSync as execSyncBulletin } from "node:child_process";
 import { plan, execute, check, act } from "../src/index.ts";
 import {
@@ -34,6 +33,7 @@ import {
   recordInteractionAnswer,
 } from "../src/plan-feedback-resume.ts";
 import { ParkSession } from "../src/session.ts";
+import { cleanupWorktree, createWorktree } from "../src/worktree.ts";
 
 // --- Parse args ---
 
@@ -570,56 +570,6 @@ function buildCanUseTool(
   }
 
   return undefined;
-}
-
-// --- Worktree isolation ---
-
-function createWorktree(cwd: string, workerName: string, jobId: string): string {
-  const worktreePath = `/tmp/openagent-${workerName}-${jobId}`;
-  try {
-    execSyncChild(`git worktree add "${worktreePath}" HEAD`, { cwd, encoding: "utf-8" });
-  } catch (err) {
-    throw new Error(`Failed to create worktree for ${workerName}: ${err}`);
-  }
-  return worktreePath;
-}
-
-function cleanupWorktree(worktreePath: string, realCwd: string, workerName: string): void {
-  if (!worktreePath.startsWith("/tmp/openagent-")) return;
-
-  // Only plan preserves docs/plans/*.md — check preserves nothing
-  if (workerName === "plan") {
-    const planDir = path.join(worktreePath, "docs", "plans");
-    const realPlanDir = path.join(realCwd, "docs", "plans");
-    try {
-      if (fs.existsSync(planDir)) {
-        fs.mkdirSync(realPlanDir, { recursive: true });
-        for (const file of fs.readdirSync(planDir)) {
-          if (file.endsWith(".md")) {
-            const src = path.join(planDir, file);
-            const dest = path.join(realPlanDir, file);
-            const srcStat = fs.statSync(src);
-            try {
-              const destStat = fs.statSync(dest);
-              if (srcStat.mtimeMs > destStat.mtimeMs) {
-                fs.copyFileSync(src, dest);
-              }
-            } catch {
-              fs.copyFileSync(src, dest);
-            }
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // Remove worktree
-  try {
-    execSyncChild(`git worktree remove "${worktreePath}" --force`, { cwd: realCwd, encoding: "utf-8" });
-  } catch {
-    try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch {}
-    try { execSyncChild(`git worktree prune`, { cwd: realCwd, encoding: "utf-8" }); } catch {}
-  }
 }
 
 async function main() {
