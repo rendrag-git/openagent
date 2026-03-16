@@ -16,7 +16,9 @@ describe("openagent CLI", () => {
       execSync(CLI, { encoding: "utf-8" });
       assert.fail("should exit non-zero");
     } catch (err: any) {
-      assert.ok(err.stderr.includes("Usage:") || err.stdout.includes("Usage:"));
+      const output = `${err.stderr ?? ""}${err.stdout ?? ""}`;
+      assert.ok(output.includes("Usage:"));
+      assert.ok(output.includes("--feedback <text>"));
     }
   });
 
@@ -31,8 +33,9 @@ describe("openagent CLI", () => {
 
   it("writes result to job directory", () => {
     const jobDir = `${TEST_JOBS}/job-test-1`;
+    const task = "List files in this directory. Under 50 words.";
     const output = execSync(
-      `${CLI} --worker plan --task "List files in this directory. Under 50 words." --cwd /home/ubuntu/projects/openagent --job-dir ${jobDir}`,
+      `${CLI} --worker plan --task "${task}" --cwd /home/ubuntu/projects/openagent --job-dir ${jobDir}`,
       { encoding: "utf-8", timeout: 120000 },
     );
     const result = JSON.parse(output);
@@ -41,16 +44,30 @@ describe("openagent CLI", () => {
 
     // Verify file was written
     const saved = JSON.parse(fs.readFileSync(`${jobDir}/plan.json`, "utf-8"));
-    assert.equal(saved.success, true);
-    assert.equal(saved.output, result.output);
+    assert.equal(saved.task, task);
+    assert.equal(saved.context, null);
+    assert.equal(saved.feedback, null);
+    assert.equal(saved.result.success, true);
+    assert.equal(saved.result.output, result.output);
   });
 
   it("reads context from previous phase file", () => {
     const jobDir = `${TEST_JOBS}/job-test-2`;
     fs.mkdirSync(jobDir, { recursive: true });
     fs.writeFileSync(`${jobDir}/plan.json`, JSON.stringify({
-      success: true,
-      output: "The plan is to create a hello.ts file that exports greet(name).",
+      task: "Build greet(name)",
+      context: null,
+      feedback: "Keep it minimal.",
+      result: {
+        success: true,
+        output: "The plan is to create a hello.ts file that exports greet(name).",
+        filesChanged: [],
+        questions: [],
+        sessionId: "sess_test",
+        stopReason: "end_turn",
+        costUsd: 0,
+        usage: { inputTokens: 0, outputTokens: 0, durationMs: 0 },
+      },
     }));
 
     const output = execSync(
@@ -59,6 +76,19 @@ describe("openagent CLI", () => {
     );
     const result = JSON.parse(output);
     assert.equal(typeof result.success, "boolean");
+  });
+
+  it("writes feedback into the phase envelope", () => {
+    const jobDir = `${TEST_JOBS}/job-test-feedback`;
+    const feedback = "Tighten the implementation details.";
+    execSync(
+      `${CLI} --worker plan --task "Outline a short plan." --cwd /home/ubuntu/projects/openagent --job-dir ${jobDir} --feedback "${feedback}"`,
+      { encoding: "utf-8", timeout: 120000 },
+    );
+
+    const saved = JSON.parse(fs.readFileSync(`${jobDir}/plan.json`, "utf-8"));
+    assert.equal(saved.feedback, feedback);
+    assert.equal(typeof saved.result.output, "string");
   });
 
   it("classify worker returns a valid route key", () => {

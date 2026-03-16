@@ -3,6 +3,12 @@ import path from "node:path";
 import { execSync as execSyncChild } from "node:child_process";
 import { execSync as execSyncBulletin } from "node:child_process";
 import { plan, execute, check, act } from "../src/index.ts";
+import {
+  buildFeedbackContext,
+  createPhaseEnvelope,
+  loadContext as loadChainedContext,
+  loadPhaseOutput,
+} from "../src/context-chain.ts";
 import { parkSession } from "../src/feedback.ts";
 import { createCanUseTool } from "../src/can-use-tool.ts";
 import type { TaskResult } from "../src/types.ts";
@@ -47,10 +53,11 @@ const worker = args.worker;
 const task = args.task;
 const cwd = args.cwd;
 const jobDir = args["job-dir"];
+const feedback = args.feedback;
 const dryRun = process.argv.includes("--dry-run");
 
 if (!worker || !task || !cwd) {
-  console.error("Usage: openagent-run --worker <plan|execute|check|act|classify|resume> --task <task> --cwd <cwd> --job-dir <dir> [--dry-run]");
+  console.error("Usage: openagent-run --worker <plan|execute|check|act|classify|resume> --task <task> --cwd <cwd> [--job-dir <dir>] [--feedback <text>] [--dry-run]");
   process.exit(1);
 }
 
@@ -65,6 +72,46 @@ function writeResult(filePath: string, content: string): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(filePath, content);
+}
+
+function isPhaseWorker(workerName: string): workerName is keyof typeof WORKERS {
+  return workerName in WORKERS;
+}
+
+function buildWorkerContext(
+  workerName: string,
+  jobDir: string | undefined,
+  feedbackText: string | undefined,
+): { baseContext?: string; effectiveContext?: string } {
+  const baseContext = jobDir ? loadChainedContext(jobDir, workerName) : undefined;
+  if (!feedbackText) {
+    return { baseContext, effectiveContext: baseContext };
+  }
+
+  const priorOutput = jobDir ? loadPhaseOutput(jobDir, workerName) : undefined;
+  const feedbackContext = buildFeedbackContext(workerName, priorOutput, feedbackText);
+  return {
+    baseContext,
+    effectiveContext: baseContext ? `${baseContext}\n\n${feedbackContext}` : feedbackContext,
+  };
+}
+
+function serializeWorkerResult(
+  workerName: string,
+  task: string,
+  baseContext: string | undefined,
+  feedbackText: string | undefined,
+  result: TaskResult,
+): string {
+  if (!isPhaseWorker(workerName)) {
+    return JSON.stringify(result, null, 2);
+  }
+
+  return JSON.stringify(
+    createPhaseEnvelope(task, baseContext, feedbackText, result),
+    null,
+    2,
+  );
 }
 
 function getJobId(jobDir: string | undefined, workerName: string): string {
@@ -230,35 +277,6 @@ async function buildParkedResult(
   }
 
   return result;
-}
-
-// --- Load context from previous phase if available ---
-
-function loadContext(jobDir: string, worker: string): string | undefined {
-  if (!jobDir) return undefined;
-
-  // Context chaining: execute reads plan, check reads plan+execute, act reads check
-  const chain: Record<string, string[]> = {
-    execute: ["plan"],
-    check: ["plan", "execute"],
-    act: ["check"],
-  };
-
-  const phases = chain[worker];
-  if (!phases) return undefined;
-
-  const parts: string[] = [];
-  for (const phase of phases) {
-    const file = path.join(jobDir, `${phase}.json`);
-    try {
-      const data = JSON.parse(fs.readFileSync(file, "utf-8"));
-      parts.push(`--- ${phase} phase output ---\n${data.output}`);
-    } catch {
-      // phase file doesn't exist yet, skip
-    }
-  }
-
-  return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
 // --- Run worker ---
@@ -682,7 +700,7 @@ async function main() {
     process.exit(1);
   }
 
-  const context = loadContext(jobDir, worker);
+  const { baseContext, effectiveContext: context } = buildWorkerContext(worker, jobDir, feedback);
 
   let effectiveCwd = cwd;
   let worktreePath: string | undefined;
@@ -703,7 +721,10 @@ async function main() {
     const result = await fn({ task, cwd: effectiveCwd, context, canUseTool });
 
     if (jobDir) {
-      writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(result, null, 2));
+      writeResult(
+        path.join(jobDir, `${worker}.json`),
+        serializeWorkerResult(worker, task, baseContext, feedback, result),
+      );
     }
 
     if (jobDir && worker === "plan") {
@@ -723,7 +744,10 @@ async function main() {
       const parkedResult = await buildParkedResult(err, worker, effectiveCwd, jobDir, jobId);
 
       if (jobDir) {
-        writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(parkedResult, null, 2));
+        writeResult(
+          path.join(jobDir, `${worker}.json`),
+          serializeWorkerResult(worker, task, baseContext, feedback, parkedResult),
+        );
       }
 
       if (jobDir && worker === "plan") {
@@ -746,7 +770,10 @@ async function main() {
     };
 
     if (jobDir) {
-      writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(errorResult, null, 2));
+      writeResult(
+        path.join(jobDir, `${worker}.json`),
+        serializeWorkerResult(worker, task, baseContext, feedback, errorResult),
+      );
     }
 
     if (jobDir && worker === "plan") {

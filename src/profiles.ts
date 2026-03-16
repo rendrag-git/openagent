@@ -24,6 +24,9 @@ export const PROFILES: Record<string, WorkerProfile> = {
     permissionMode: "acceptEdits",
     systemPromptAppend:
       "You are implementing a task. Follow the plan provided. " +
+      "Execute what you build — if you write a script, run it. If the plan says deploy, deploy. " +
+      "Do not hand the user a list of manual steps. If you cannot perform an action " +
+      "(missing access, credentials, or tools), say so explicitly rather than writing a script for the user to run. " +
       "When you need clarification, use AskUserQuestion. " +
       QUESTION_ROUTING,
     settingSources: ["project"],

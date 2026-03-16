@@ -89,4 +89,9 @@ describe("profiles", () => {
   it("execute profile has no denyTools", () => {
     assert.equal(PROFILES.execute.denyTools, undefined);
   });
+
+  it("execute profile tells the worker to execute what it builds", () => {
+    assert.ok(PROFILES.execute.systemPromptAppend.includes("Execute what you build"));
+    assert.ok(PROFILES.execute.systemPromptAppend.includes("Do not hand the user a list of manual steps"));
+  });
 });
