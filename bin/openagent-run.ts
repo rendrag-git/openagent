@@ -5,6 +5,14 @@ import { execSync as execSyncBulletin } from "node:child_process";
 import { plan, execute, check, act } from "../src/index.ts";
 import { createCanUseTool } from "../src/can-use-tool.ts";
 import type { TaskResult } from "../src/types.ts";
+import {
+  appendPlanEvent,
+  createPlanEvent,
+  initializePlanFeedbackJob,
+  loadPlanState,
+  savePlanState,
+  type PlanState,
+} from "../src/plan-feedback.ts";
 
 // --- Parse args ---
 
@@ -42,6 +50,126 @@ function writeResult(filePath: string, content: string): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(filePath, content);
+}
+
+function getJobId(jobDir: string | undefined, workerName: string): string {
+  return jobDir?.split("/").pop() ?? `${workerName}-${Date.now()}`;
+}
+
+async function initializePlanRunState(
+  jobDir: string,
+  jobId: string,
+  runTask: string,
+  runCwd: string,
+): Promise<void> {
+  await initializePlanFeedbackJob(jobDir, jobId, {
+    status: "running_planner",
+  });
+
+  const state = await loadPlanState(jobDir);
+  if (!state) return;
+
+  const updated: PlanState = {
+    ...state,
+    status: "running_planner",
+    currentStep: {
+      kind: "plan_run",
+      label: "Planner run started",
+    },
+    planner: {
+      ...state.planner,
+      sdkSessionStatus: "active",
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  await savePlanState(jobDir, updated);
+
+  await appendPlanEvent(
+    jobDir,
+    createPlanEvent(jobId, "plan.run.started", {
+      worker: "plan",
+      task: runTask,
+      cwd: runCwd,
+    }),
+  );
+}
+
+async function finalizePlanRunState(
+  jobDir: string,
+  jobId: string,
+  result: TaskResult,
+): Promise<void> {
+  const state = (await loadPlanState(jobDir)) ?? await initializePlanFeedbackJob(jobDir, jobId);
+  const plannerStatus =
+    result.stopReason === "parked"
+      ? "parked"
+      : result.stopReason === "end_turn"
+        ? "completed"
+        : "failed";
+
+  const nextStatus =
+    result.stopReason === "parked"
+      ? "routing_interaction"
+      : result.success
+        ? "plan_complete"
+        : "failed";
+
+  const updated: PlanState = {
+    ...state,
+    status: nextStatus,
+    currentStep: result.stopReason === "parked"
+      ? {
+          kind: "waiting_for_feedback",
+          label: result.parkedQuestion?.text ?? "Planner waiting for feedback",
+        }
+      : {
+          kind: "plan_result",
+          label: result.success ? "Planner completed" : "Planner failed",
+        },
+    planner: {
+      ...state.planner,
+      sdkSessionId: result.sessionId || state.planner.sdkSessionId,
+      sdkSessionStatus: plannerStatus,
+      lastPlannerResultPath: "plan.json",
+    },
+    updatedAt: new Date().toISOString(),
+  };
+
+  await savePlanState(jobDir, updated);
+
+  await appendPlanEvent(
+    jobDir,
+    createPlanEvent(jobId, "plan.run.completed", {
+      worker: "plan",
+      success: result.success,
+      stopReason: result.stopReason,
+      sessionId: result.sessionId,
+    }),
+  );
+
+  if (result.stopReason === "parked") {
+    await appendPlanEvent(
+      jobDir,
+      createPlanEvent(jobId, "plan.session.parked", {
+        planner: {
+          sdkSessionId: result.sessionId,
+          sdkSessionStatus: "parked",
+          resumeStrategy: updated.planner.resumeStrategy,
+        },
+        interactionId: updated.activeInteractionId,
+      }),
+    );
+  }
+
+  if (result.success) {
+    await appendPlanEvent(
+      jobDir,
+      createPlanEvent(jobId, "plan.completed", {
+        worker: "plan",
+        outputPath: "plan.json",
+      }),
+    );
+  }
 }
 
 // --- Load context from previous phase if available ---
@@ -361,10 +489,14 @@ async function main() {
 
   let effectiveCwd = cwd;
   let worktreePath: string | undefined;
+  const jobId = getJobId(jobDir, worker);
+
+  if (jobDir && worker === "plan") {
+    await initializePlanRunState(jobDir, jobId, task, cwd);
+  }
 
   // Plan and check run in worktrees for isolation
   if (worker === "plan" || worker === "check") {
-    const jobId = jobDir?.split("/").pop() ?? `${worker}-${Date.now()}`;
     worktreePath = createWorktree(cwd, worker, jobId);
     effectiveCwd = worktreePath;
   }
@@ -375,6 +507,10 @@ async function main() {
 
     if (jobDir) {
       writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(result, null, 2));
+    }
+
+    if (jobDir && worker === "plan") {
+      await finalizePlanRunState(jobDir, jobId, result);
     }
 
     if (jobDir && questionLog.length > 0) {
@@ -399,6 +535,10 @@ async function main() {
 
     if (jobDir) {
       writeResult(path.join(jobDir, `${worker}.json`), JSON.stringify(errorResult, null, 2));
+    }
+
+    if (jobDir && worker === "plan") {
+      await finalizePlanRunState(jobDir, jobId, errorResult);
     }
 
     console.log(JSON.stringify(errorResult));
