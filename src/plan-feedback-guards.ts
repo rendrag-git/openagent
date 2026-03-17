@@ -45,6 +45,15 @@ export function applyPlanOutputGuards(
     return result;
   }
 
+  if (!result.output.trim()) {
+    return {
+      ...result,
+      success: false,
+      stopReason: "error",
+      output: "Planner returned no plan output and no interaction. A successful plan run must either produce a real plan artifact/summary or emit a structured AskUserQuestion interaction.",
+    };
+  }
+
   const violation = detectNarratedPlanApproval(result.output);
   if (!violation) {
     return result;

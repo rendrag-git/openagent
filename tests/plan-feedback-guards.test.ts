@@ -53,4 +53,12 @@ describe("plan-feedback guards", () => {
     assert.equal(guarded.success, true);
     assert.equal(guarded.stopReason, "end_turn");
   });
+
+  it("turns empty successful plan output into an error when no interaction is open", () => {
+    const guarded = applyPlanOutputGuards(makeResult(""), false);
+
+    assert.equal(guarded.success, false);
+    assert.equal(guarded.stopReason, "error");
+    assert.match(guarded.output, /returned no plan output and no interaction/i);
+  });
 });
