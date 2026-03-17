@@ -74,6 +74,48 @@ function isReusableBinding(binding: SessionBinding | null | undefined): binding 
   return Boolean(binding && binding.status === "active");
 }
 
+function normalizeInteractionRouting(interaction: PlanInteraction): void {
+  switch (interaction.kind) {
+    case "clarify_advisory":
+      interaction.owner = { kind: "system", id: "advisory" };
+      interaction.routing.transport = "bulletin";
+      interaction.routing.targetAgentId = "advisory";
+      return;
+    case "clarify_product":
+      interaction.owner = { kind: "agent", id: "pm" };
+      interaction.routing.transport = "direct_session";
+      interaction.routing.targetAgentId = "pm";
+      return;
+    case "approach_decision":
+      interaction.owner = { kind: "agent", id: "pm" };
+      interaction.routing.transport = "direct_session";
+      interaction.routing.targetAgentId = "pm";
+      return;
+    case "clarify_specialist":
+      interaction.routing.transport = "direct_session";
+      if (interaction.owner.kind === "agent") {
+        interaction.routing.targetAgentId = interaction.routing.targetAgentId ?? interaction.owner.id;
+      }
+      return;
+    case "design_section_review":
+      if (interaction.owner.kind === "human") {
+        interaction.routing.transport = "discord_thread";
+        interaction.routing.targetAgentId = null;
+      } else {
+        interaction.routing.transport = "direct_session";
+        if (interaction.owner.kind === "agent") {
+          interaction.routing.targetAgentId = interaction.routing.targetAgentId ?? interaction.owner.id;
+        }
+      }
+      return;
+    case "spec_user_review":
+      interaction.owner = { kind: "human", id: "user" };
+      interaction.routing.transport = "discord_thread";
+      interaction.routing.targetAgentId = null;
+      return;
+  }
+}
+
 export async function routePlanInteraction(
   jobDir: string,
   interactionId: string,
@@ -83,6 +125,8 @@ export async function routePlanInteraction(
   if (!interaction) {
     throw new Error(`Unknown interaction: ${interactionId}`);
   }
+
+  normalizeInteractionRouting(interaction);
 
   const timestamp = now();
   const sessions = await loadSessionBindings(jobDir);

@@ -69,6 +69,45 @@ describe("plan-feedback interactions", () => {
     assert.equal(userReview!.interaction.routing.transport, "discord_thread");
   });
 
+  it("rewrites single-owner approvals away from bulletin", () => {
+    const parsed = parseStructuredPlanInteraction(
+      {
+        questions: [
+          {
+            question:
+              'OPENAGENT_PLAN_INTERACTION: {"kind":"approach_decision","title":"Choose a direction","owner":{"kind":"system","id":"advisory"},"routing":{"transport":"bulletin","targetAgentId":"dev"}}',
+          },
+        ],
+      },
+      "job-policy",
+    );
+
+    assert.ok(parsed);
+    assert.equal(parsed!.interaction.owner.kind, "agent");
+    assert.equal(parsed!.interaction.owner.id, "pm");
+    assert.equal(parsed!.interaction.routing.transport, "direct_session");
+    assert.equal(parsed!.interaction.routing.targetAgentId, "pm");
+  });
+
+  it("keeps human design escalation on discord_thread", () => {
+    const parsed = parseStructuredPlanInteraction(
+      {
+        questions: [
+          {
+            question:
+              'OPENAGENT_PLAN_INTERACTION: {"kind":"design_section_review","title":"Review architecture section","owner":{"kind":"human","id":"user"},"routing":{"transport":"bulletin","targetAgentId":"pm"}}',
+          },
+        ],
+      },
+      "job-human-review",
+    );
+
+    assert.ok(parsed);
+    assert.equal(parsed!.interaction.owner.kind, "human");
+    assert.equal(parsed!.interaction.routing.transport, "discord_thread");
+    assert.equal(parsed!.interaction.routing.targetAgentId, null);
+  });
+
   it("maps interaction kinds to plan workflow states", () => {
     assert.equal(
       getWorkflowStatusForInteraction("clarify_product", { kind: "agent", id: "pm" }),
@@ -89,5 +128,6 @@ describe("plan-feedback interactions", () => {
     assert.match(instruction, /OPENAGENT_PLAN_INTERACTION:/);
     assert.match(instruction, /direct_session/);
     assert.match(instruction, /discord_thread/);
+    assert.match(instruction, /Do not use bulletin for single-owner approvals/);
   });
 });

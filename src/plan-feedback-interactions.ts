@@ -34,6 +34,12 @@ interface PlanInteractionEnvelope {
   };
 }
 
+interface NormalizedInteractionPolicy {
+  owner: PlanActor;
+  transport: RoutingTransport;
+  targetAgentId: string | null;
+}
+
 export interface ParsedPlanInteraction {
   interaction: PlanInteraction;
   currentStep: {
@@ -72,14 +78,63 @@ function defaultOwner(kind: InteractionKind): PlanActor {
   }
 }
 
-function defaultTransport(kind: InteractionKind): RoutingTransport {
+function normalizeInteractionPolicy(
+  kind: InteractionKind,
+  requestedOwner: PlanActor | undefined,
+  requestedTargetAgentId: string | null | undefined,
+): NormalizedInteractionPolicy {
   switch (kind) {
     case "clarify_advisory":
-      return "bulletin";
+      return {
+        owner: { kind: "system", id: "advisory" },
+        transport: "bulletin",
+        targetAgentId: "advisory",
+      };
+    case "clarify_product":
+      return {
+        owner: { kind: "agent", id: "pm" },
+        transport: "direct_session",
+        targetAgentId: "pm",
+      };
+    case "approach_decision":
+      return {
+        owner: { kind: "agent", id: "pm" },
+        transport: "direct_session",
+        targetAgentId: "pm",
+      };
+    case "clarify_specialist": {
+      const owner = requestedOwner?.kind === "agent"
+        ? requestedOwner
+        : defaultOwner(kind);
+      return {
+        owner,
+        transport: "direct_session",
+        targetAgentId: requestedTargetAgentId ?? owner.id,
+      };
+    }
+    case "design_section_review": {
+      if (requestedOwner?.kind === "human") {
+        return {
+          owner: requestedOwner,
+          transport: "discord_thread",
+          targetAgentId: null,
+        };
+      }
+      const owner = requestedOwner?.kind === "agent"
+        ? requestedOwner
+        : defaultOwner(kind);
+      return {
+        owner,
+        transport: "direct_session",
+        targetAgentId: requestedTargetAgentId ?? owner.id,
+      };
+    }
     case "spec_user_review":
-      return "discord_thread";
-    default:
-      return "direct_session";
+      return {
+        owner: { kind: "human", id: "user" },
+        transport: "discord_thread",
+        targetAgentId: null,
+      };
   }
 }
 
@@ -165,10 +220,15 @@ export function parseStructuredPlanInteraction(
   const envelope = parseQuestionText(rawQuestion);
   if (!envelope) return null;
 
-  const owner = envelope.owner ?? defaultOwner(envelope.kind);
+  const normalizedPolicy = normalizeInteractionPolicy(
+    envelope.kind,
+    envelope.owner,
+    envelope.routing?.targetAgentId,
+  );
+  const owner = normalizedPolicy.owner;
   const routing: InteractionRouting = {
-    transport: envelope.routing?.transport ?? defaultTransport(envelope.kind),
-    targetAgentId: envelope.routing?.targetAgentId ?? (owner.kind === "agent" ? owner.id : null),
+    transport: normalizedPolicy.transport,
+    targetAgentId: normalizedPolicy.targetAgentId ?? (owner.kind === "agent" ? owner.id : null),
     sessionBindingId: envelope.routing?.sessionBindingId ?? null,
     threadId: envelope.routing?.threadId ?? null,
     bulletinId: envelope.routing?.bulletinId ?? null,
@@ -215,7 +275,8 @@ export function formatPlanInteractionInstruction(exampleTransport: string = "dir
   return (
     "For planning feedback loops, AskUserQuestion should carry a structured JSON envelope in the first question string. " +
     `Prefix it with ${STRUCTURED_PREFIX} and include kind, title, prompt, owner, routing, currentStep, and any options. ` +
-    `Use direct_session for PM or specialist approvals, bulletin for advisory requests, and discord_thread for human review.`
+    `Use direct_session for clarify_product, clarify_specialist, approach_decision, and PM design_section_review. ` +
+    `Use bulletin only for clarify_advisory. Use discord_thread for human review or explicit human design escalation. ` +
+    `Do not use bulletin for single-owner approvals or product decisions. Example preferred transport: ${exampleTransport}.`
   );
 }
-

@@ -103,6 +103,39 @@ describe("plan-feedback routing", () => {
     assert.match(interaction!.routing.bulletinId!, /^blt-/);
   });
 
+  it("corrects invalid bulletin routing for PM-owned approach decisions", async () => {
+    await initializePlanFeedbackJob(TEST_DIR, JOB_ID);
+    await saveInteraction(
+      TEST_DIR,
+      createInteraction(JOB_ID, {
+        interactionId: "pi_wrong_transport",
+        kind: "approach_decision",
+        status: "requested",
+        owner: { kind: "system", id: "advisory" },
+        routing: {
+          transport: "bulletin",
+          targetAgentId: "dev",
+        },
+        request: { title: "Choose implementation approach" },
+        response: null,
+        resolution: null,
+        resume: { mode: "sdk_resume", target: "openagent.plan", sdkSessionId: "sess_123" },
+        timeouts: { softSeconds: 1800, hardSeconds: 3600 },
+      }),
+    );
+
+    const routed = await routePlanInteraction(TEST_DIR, "pi_wrong_transport");
+    const interaction = await loadInteraction(TEST_DIR, "pi_wrong_transport");
+
+    assert.equal(routed.action, "establish_direct_session");
+    assert.equal(routed.transport, "direct_session");
+    assert.equal(routed.target, "pm");
+    assert.equal(interaction?.owner.kind, "agent");
+    assert.equal(interaction?.owner.id, "pm");
+    assert.equal(interaction?.routing.transport, "direct_session");
+    assert.equal(interaction?.routing.targetAgentId, "pm");
+  });
+
   it("uses provided thread metadata for human review gates", async () => {
     await initializePlanFeedbackJob(TEST_DIR, JOB_ID);
     await saveInteraction(
