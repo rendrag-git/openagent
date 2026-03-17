@@ -101,4 +101,11 @@ describe("profiles", () => {
     assert.ok(!PROFILES.plan.systemPromptAppend.includes("Use direct_session"));
     assert.ok(!PROFILES.plan.systemPromptAppend.includes("Use bulletin only"));
   });
+
+  it("execute, check, and act treat the orchestrator as the only external interlocutor", () => {
+    for (const name of ["execute", "check", "act"] as const) {
+      assert.ok(PROFILES[name].systemPromptAppend.includes("exactly one external interlocutor"));
+      assert.ok(PROFILES[name].systemPromptAppend.includes("delegating orchestrator"));
+    }
+  });
 });

@@ -35,6 +35,10 @@ import {
   recordInteractionAnswer,
 } from "../src/plan-feedback-resume.ts";
 import { ParkSession } from "../src/session.ts";
+import {
+  createOrchestratorQuestionHandler,
+  formatParkedQuestionOutput,
+} from "../src/orchestrator-questions.ts";
 import { cleanupWorktree, createWorktree } from "../src/worktree.ts";
 
 // --- Parse args ---
@@ -274,7 +278,7 @@ async function buildParkedResult(
 ): Promise<TaskResult> {
   const result: TaskResult = {
     success: false,
-    output: `Planner parked for feedback: ${err.question.text}`,
+    output: formatParkedQuestionOutput(workerName, err.question.text),
     filesChanged: [],
     questions: [err.question],
     sessionId: err.sessionId,
@@ -576,14 +580,14 @@ function buildCanUseTool(
   if (workerName === "check") {
     return createCanUseTool({
       deny: ["Write", "Edit"],
-      onAskUserQuestion: bulletinAskHandler,
+      onAskUserQuestion: createOrchestratorQuestionHandler(workerName, context.jobDir),
       questionLog,
     });
   }
 
   if (workerName === "execute" || workerName === "act") {
     return createCanUseTool({
-      onAskUserQuestion: bulletinAskHandler,
+      onAskUserQuestion: createOrchestratorQuestionHandler(workerName, context.jobDir),
       questionLog,
     });
   }

@@ -3,7 +3,9 @@ import { formatPlanInteractionInstruction } from "./plan-feedback-interactions.t
 
 const QUESTION_ROUTING =
   "If you are uncertain about a requirement, design decision, or approach — ask. " +
-  "Your question will be routed to the delegating agent or human for an answer.";
+  "You have exactly one external interlocutor: the delegating orchestrator. " +
+  "Do not decide who else to contact or choose side channels yourself. " +
+  "Your question will be routed by the delegating orchestrator for an answer.";
 
 export const PROFILES: Record<string, WorkerProfile> = {
   plan: {
@@ -30,7 +32,7 @@ export const PROFILES: Record<string, WorkerProfile> = {
       "Execute what you build — if you write a script, run it. If the plan says deploy, deploy. " +
       "Do not hand the user a list of manual steps. If you cannot perform an action " +
       "(missing access, credentials, or tools), say so explicitly rather than writing a script for the user to run. " +
-      "When you need clarification, use AskUserQuestion. " +
+      "When you need clarification, use AskUserQuestion and treat it as a message to the orchestrator. " +
       QUESTION_ROUTING,
     settingSources: ["project"],
     maxTurns: 50,
@@ -41,7 +43,7 @@ export const PROFILES: Record<string, WorkerProfile> = {
     systemPromptAppend:
       "You are reviewing work for correctness. Run tests, read diffs, " +
       "compare against the plan. Report issues as structured findings. " +
-      "When you need clarification, use AskUserQuestion. " +
+      "When you need clarification, use AskUserQuestion and treat it as a message to the orchestrator. " +
       QUESTION_ROUTING,
     settingSources: ["project"],
     maxTurns: 20,
@@ -53,7 +55,7 @@ export const PROFILES: Record<string, WorkerProfile> = {
     systemPromptAppend:
       "You are fixing specific issues. Be surgical — change only " +
       "what is needed to resolve the reported problems. " +
-      "When you need clarification, use AskUserQuestion. " +
+      "When you need clarification, use AskUserQuestion and treat it as a message to the orchestrator. " +
       QUESTION_ROUTING,
     settingSources: ["project"],
     maxTurns: 30,
