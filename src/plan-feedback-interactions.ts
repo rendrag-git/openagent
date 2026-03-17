@@ -18,20 +18,35 @@ interface AskUserQuestionInput {
   [key: string]: unknown;
 }
 
+type EnvelopeOwner =
+  | PlanActor
+  | "PM"
+  | "pm"
+  | "user"
+  | "human"
+  | "advisory"
+  | string;
+
+type EnvelopeRouting =
+  | Partial<InteractionRouting>
+  | RoutingTransport
+  | string;
+
+type EnvelopeOption =
+  | { id?: string; label?: string; summary?: string }
+  | string;
+
 interface PlanInteractionEnvelope {
   kind: InteractionKind;
   title?: string;
   prompt?: string;
-  owner?: PlanActor;
-  routing?: Partial<InteractionRouting>;
-  options?: Array<{ id: string; label: string; summary?: string }>;
+  owner?: EnvelopeOwner;
+  routing?: EnvelopeRouting;
+  options?: EnvelopeOption[];
   recommendedOptionId?: string | null;
   resume?: Partial<InteractionResumeConfig>;
   timeouts?: Partial<InteractionTimeouts>;
-  currentStep?: {
-    kind: string;
-    label: string;
-  };
+  currentStep?: { kind?: string; label?: string } | string;
 }
 
 interface NormalizedInteractionPolicy {
@@ -59,12 +74,155 @@ function parseQuestionText(text: string): PlanInteractionEnvelope | null {
     return null;
   }
 
+  const jsonPayload = extractFirstJSONObject(payload);
+  if (!jsonPayload) {
+    return null;
+  }
+
   try {
-    const parsed = JSON.parse(payload) as PlanInteractionEnvelope;
+    const parsed = JSON.parse(jsonPayload) as PlanInteractionEnvelope;
     return parsed?.kind ? parsed : null;
   } catch {
     return null;
   }
+}
+
+function extractFirstJSONObject(text: string): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return text.slice(0, i + 1);
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeActor(owner: EnvelopeOwner | undefined, kind: InteractionKind): PlanActor | undefined {
+  if (!owner) {
+    return undefined;
+  }
+
+  if (typeof owner === "object" && owner !== null && "kind" in owner && "id" in owner) {
+    const actor = owner as Partial<PlanActor>;
+    if (
+      (actor.kind === "agent" || actor.kind === "human" || actor.kind === "system")
+      && typeof actor.id === "string"
+    ) {
+      return { kind: actor.kind, id: actor.id };
+    }
+  }
+
+  const normalized = String(owner).trim().toLowerCase();
+  if (normalized === "pm") {
+    return { kind: "agent", id: "pm" };
+  }
+  if (normalized === "human" || normalized === "user") {
+    return { kind: "human", id: "user" };
+  }
+  if (normalized === "advisory") {
+    return { kind: "system", id: "advisory" };
+  }
+
+  return kind === "spec_user_review"
+    ? { kind: "human", id: normalized || "user" }
+    : { kind: "agent", id: normalized };
+}
+
+function normalizeRouting(
+  routing: EnvelopeRouting | undefined,
+): Partial<InteractionRouting> {
+  if (!routing) {
+    return {};
+  }
+
+  if (typeof routing === "string") {
+    return { transport: routing as RoutingTransport };
+  }
+
+  return routing;
+}
+
+function normalizeOptions(options: EnvelopeOption[] | undefined) {
+  if (!options) {
+    return undefined;
+  }
+
+  return options.map((option, index) => {
+    if (typeof option === "string") {
+      return {
+        id: option.trim().toLowerCase() || `option-${index + 1}`,
+        label: option,
+      };
+    }
+
+    const label = option.label ?? option.id ?? `Option ${index + 1}`;
+    const normalizedId = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const resolvedId = option.id ?? normalizedId;
+    return {
+      id: resolvedId || `option-${index + 1}`,
+      label,
+      ...(option.summary ? { summary: option.summary } : {}),
+    };
+  });
+}
+
+function normalizeCurrentStep(
+  kind: InteractionKind,
+  currentStep: PlanInteractionEnvelope["currentStep"],
+): { kind: string; label: string } | undefined {
+  if (!currentStep) {
+    return undefined;
+  }
+
+  if (typeof currentStep === "string") {
+    return { kind: defaultStep(kind).kind, label: currentStep };
+  }
+
+  if (typeof currentStep.kind === "string" && typeof currentStep.label === "string") {
+    return { kind: currentStep.kind, label: currentStep.label };
+  }
+
+  if (typeof currentStep.label === "string") {
+    return { kind: defaultStep(kind).kind, label: currentStep.label };
+  }
+
+  return undefined;
+}
+
+export function hasStructuredPlanInteractionPrefix(input: AskUserQuestionInput): boolean {
+  const questions = input.questions ?? [];
+  const firstQuestion = questions.find((question) => typeof question?.question === "string");
+  return firstQuestion?.question?.trim().startsWith(STRUCTURED_PREFIX) ?? false;
 }
 
 function defaultOwner(kind: InteractionKind): PlanActor {
@@ -222,17 +380,18 @@ export function parseStructuredPlanInteraction(
 
   const normalizedPolicy = normalizeInteractionPolicy(
     envelope.kind,
-    envelope.owner,
-    envelope.routing?.targetAgentId,
+    normalizeActor(envelope.owner, envelope.kind),
+    normalizeRouting(envelope.routing).targetAgentId,
   );
   const owner = normalizedPolicy.owner;
+  const requestedRouting = normalizeRouting(envelope.routing);
   const routing: InteractionRouting = {
     transport: normalizedPolicy.transport,
     targetAgentId: normalizedPolicy.targetAgentId ?? (owner.kind === "agent" ? owner.id : null),
-    sessionBindingId: envelope.routing?.sessionBindingId ?? null,
-    threadId: envelope.routing?.threadId ?? null,
-    bulletinId: envelope.routing?.bulletinId ?? null,
-    discordMessageId: envelope.routing?.discordMessageId ?? null,
+    sessionBindingId: requestedRouting.sessionBindingId ?? null,
+    threadId: requestedRouting.threadId ?? null,
+    bulletinId: requestedRouting.bulletinId ?? null,
+    discordMessageId: requestedRouting.discordMessageId ?? null,
   };
   const timeouts = {
     ...defaultTimeouts(envelope.kind),
@@ -255,7 +414,7 @@ export function parseStructuredPlanInteraction(
     request: {
       title: envelope.title ?? defaultTitle(envelope.kind),
       prompt: envelope.prompt,
-      options: envelope.options,
+      options: normalizeOptions(envelope.options),
       recommendedOptionId: envelope.recommendedOptionId ?? null,
     },
     response: null,
@@ -266,7 +425,7 @@ export function parseStructuredPlanInteraction(
 
   return {
     interaction,
-    currentStep: envelope.currentStep ?? defaultStep(envelope.kind),
+    currentStep: normalizeCurrentStep(envelope.kind, envelope.currentStep) ?? defaultStep(envelope.kind),
     rawQuestion,
   };
 }
@@ -274,7 +433,13 @@ export function parseStructuredPlanInteraction(
 export function formatPlanInteractionInstruction(exampleTransport: string = "direct_session"): string {
   return (
     "For planning feedback loops, AskUserQuestion should carry a structured JSON envelope in the first question string. " +
-    `Prefix it with ${STRUCTURED_PREFIX} and include kind, title, prompt, owner, routing, currentStep, and any options. ` +
+    `The first question string must be ONLY the prefixed JSON envelope. Prefix it with ${STRUCTURED_PREFIX}. ` +
+    "Do not add prose before or after it. " +
+    "Use exact shapes: " +
+    '"owner":{"kind":"agent","id":"pm"}, ' +
+    '"routing":{"transport":"direct_session","targetAgentId":"pm"}, ' +
+    '"currentStep":{"kind":"approach_decision","label":"Awaiting PM approach decision"}, ' +
+    '"options":[{"id":"a","label":"Option A","summary":"..."}]. ' +
     `Use direct_session for clarify_product, clarify_specialist, approach_decision, and PM design_section_review. ` +
     `Use bulletin only for clarify_advisory. Use discord_thread for human review or explicit human design escalation. ` +
     `Do not use bulletin for single-owner approvals or product decisions. Example preferred transport: ${exampleTransport}.`

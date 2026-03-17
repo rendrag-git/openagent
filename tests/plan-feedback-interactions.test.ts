@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   formatPlanInteractionInstruction,
   getWorkflowStatusForInteraction,
+  hasStructuredPlanInteractionPrefix,
   parseStructuredPlanInteraction,
 } from "../src/plan-feedback-interactions.ts";
 
@@ -69,6 +70,34 @@ describe("plan-feedback interactions", () => {
     assert.equal(userReview!.interaction.routing.transport, "discord_thread");
   });
 
+  it("parses hybrid structured interactions with trailing prose and shorthand fields", () => {
+    const parsed = parseStructuredPlanInteraction(
+      {
+        questions: [
+          {
+            question:
+              'OPENAGENT_PLAN_INTERACTION: {"kind":"approach_decision","title":"Project Metadata Storage — Approach Decision","prompt":"Where should project metadata live in the orchestrator job system?","owner":"PM","routing":"direct_session","currentStep":"Phase 2: Design — approach_decision","options":["A","B","C"]}\n\nWhere should project metadata live in the orchestrator? (PM single-owner approval required before proceeding)',
+          },
+        ],
+      },
+      "job-hybrid",
+    );
+
+    assert.ok(parsed);
+    assert.equal(parsed!.interaction.kind, "approach_decision");
+    assert.equal(parsed!.interaction.owner.kind, "agent");
+    assert.equal(parsed!.interaction.owner.id, "pm");
+    assert.equal(parsed!.interaction.routing.transport, "direct_session");
+    assert.equal(parsed!.interaction.routing.targetAgentId, "pm");
+    assert.equal(parsed!.interaction.request.options?.length, 3);
+    assert.deepEqual(
+      parsed!.interaction.request.options?.map((option) => option.id),
+      ["a", "b", "c"],
+    );
+    assert.equal(parsed!.currentStep.kind, "approach_decision");
+    assert.equal(parsed!.currentStep.label, "Phase 2: Design — approach_decision");
+  });
+
   it("rewrites single-owner approvals away from bulletin", () => {
     const parsed = parseStructuredPlanInteraction(
       {
@@ -129,5 +158,23 @@ describe("plan-feedback interactions", () => {
     assert.match(instruction, /direct_session/);
     assert.match(instruction, /discord_thread/);
     assert.match(instruction, /Do not use bulletin for single-owner approvals/);
+    assert.match(instruction, /must be ONLY the prefixed JSON envelope/);
+    assert.match(instruction, /Do not add prose before or after it/);
+    assert.match(instruction, /"owner":\{"kind":"agent","id":"pm"\}/);
+  });
+
+  it("detects prefixed structured interactions even before parsing succeeds", () => {
+    assert.equal(
+      hasStructuredPlanInteractionPrefix({
+        questions: [{ question: 'OPENAGENT_PLAN_INTERACTION: {"kind":"approach_decision"} trailing prose' }],
+      }),
+      true,
+    );
+    assert.equal(
+      hasStructuredPlanInteractionPrefix({
+        questions: [{ question: "Which database should we use?" }],
+      }),
+      false,
+    );
   });
 });

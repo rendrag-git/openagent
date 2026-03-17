@@ -25,6 +25,7 @@ import {
 import { dispatchPlanInteraction } from "../src/plan-feedback-dispatch.ts";
 import {
   getWorkflowStatusForInteraction,
+  hasStructuredPlanInteractionPrefix,
   parseStructuredPlanInteraction,
 } from "../src/plan-feedback-interactions.ts";
 import { routePlanInteraction } from "../src/plan-feedback-routing.ts";
@@ -565,6 +566,11 @@ function buildCanUseTool(
           const parsed = parseStructuredPlanInteraction(input, context.jobId);
           if (parsed) {
             return persistStructuredPlanInteraction(input, workerName, context.jobDir, context.jobId);
+          }
+          if (hasStructuredPlanInteractionPrefix(input)) {
+            throw new Error(
+              "Malformed structured plan interaction. The first AskUserQuestion string must contain only a valid OPENAGENT_PLAN_INTERACTION JSON envelope with exact owner, routing, currentStep, and options shapes.",
+            );
           }
         }
 
