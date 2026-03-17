@@ -23,6 +23,7 @@ import {
   type PlanState,
 } from "../src/plan-feedback.ts";
 import { dispatchPlanInteraction } from "../src/plan-feedback-dispatch.ts";
+import { applyPlanOutputGuards } from "../src/plan-feedback-guards.ts";
 import {
   getWorkflowStatusForInteraction,
   hasStructuredPlanInteractionPrefix,
@@ -694,7 +695,11 @@ async function main() {
 
   try {
     const canUseTool = buildCanUseTool(worker, { jobDir, jobId });
-    const result = await fn({ task, cwd: effectiveCwd, context, canUseTool });
+    const rawResult = await fn({ task, cwd: effectiveCwd, context, canUseTool });
+    const result =
+      worker === "plan" && jobDir
+        ? applyPlanOutputGuards(rawResult, (await listOpenInteractions(jobDir)).length > 0)
+        : rawResult;
 
     if (jobDir) {
       writeResult(

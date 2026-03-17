@@ -16,18 +16,48 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function scoreOptionMatch(interaction: PlanInteraction, optionId: string, optionLabel: string, answer: string): number {
+  const normalizedAnswer = answer.toLowerCase();
+  const escapedId = escapeRegExp(optionId);
+  const escapedLabel = escapeRegExp(optionLabel);
+
+  let score = 0;
+
+  if (optionLabel && new RegExp(`\\b${escapedLabel}\\b`, "i").test(normalizedAnswer)) {
+    score = Math.max(score, 100);
+  }
+
+  if (new RegExp(`(?:option|approach|choice)\\s+${escapedId}(?:\\b|$)`, "i").test(normalizedAnswer)) {
+    score = Math.max(score, 90);
+  }
+
+  if (optionId.length > 1 && new RegExp(`(?:^|\\b)${escapedId}(?:\\b|$)`, "i").test(normalizedAnswer)) {
+    score = Math.max(score, 40);
+  }
+
+  if (normalizedAnswer === optionId || normalizedAnswer === optionLabel) {
+    score = Math.max(score, 110);
+  }
+
+  return score;
+}
+
 function parseAnswer(interaction: PlanInteraction, answer: string): Record<string, unknown> {
   const trimmed = answer.trim();
   const options = interaction.request.options ?? [];
-  const normalized = trimmed.toLowerCase();
+  const matches = options
+    .map((option) => ({
+      option,
+      score: scoreOptionMatch(interaction, option.id.toLowerCase(), option.label.toLowerCase(), trimmed),
+    }))
+    .filter((match) => match.score > 0)
+    .sort((a, b) => b.score - a.score);
 
-  const matchedOption = options.find((option) => {
-    const optionId = option.id.toLowerCase();
-    const optionLabel = option.label.toLowerCase();
-    const idPattern = new RegExp(`(?:^|\\b)(?:option\\s+)?${optionId}(?:\\b|$)`, "i");
-    const labelPattern = new RegExp(`(?:^|\\b)${optionLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\b|$)`, "i");
-    return normalized === optionId || normalized === optionLabel || idPattern.test(trimmed) || labelPattern.test(trimmed);
-  });
+  const matchedOption = matches[0]?.option;
 
   if (matchedOption) {
     return {

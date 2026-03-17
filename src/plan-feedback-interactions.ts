@@ -441,6 +441,8 @@ export function formatPlanInteractionInstruction(exampleTransport: string = "dir
     '"currentStep":{"kind":"approach_decision","label":"Awaiting PM approach decision"}, ' +
     '"options":[{"id":"a","label":"Option A","summary":"..."}]. ' +
     `Use direct_session for clarify_product, clarify_specialist, approach_decision, and PM design_section_review. ` +
+    'After an approach is approved, every design section approval gate must use AskUserQuestion with kind "design_section_review". ' +
+    'Never write "awaiting your approval" or "before proceeding to Section X" in normal output. If approval is needed, emit the structured interaction and stop. ' +
     `Use bulletin only for clarify_advisory. Use discord_thread for human review or explicit human design escalation. ` +
     `Do not use bulletin for single-owner approvals or product decisions. Example preferred transport: ${exampleTransport}.`
   );

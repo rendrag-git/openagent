@@ -231,4 +231,60 @@ describe("plan-feedback resume", () => {
     assert.equal(state!.planner.sdkSessionStatus, "failed");
     assert.equal(interaction?.status, "response_recorded");
   });
+
+  it("prefers explicit approach selection over incidental single-letter matches", async () => {
+    await initializePlanFeedbackJob(TEST_DIR, JOB_ID, {
+      status: "awaiting_pm_approach_decision",
+    });
+    await savePlanState(
+      TEST_DIR,
+      createPlanState(JOB_ID, {
+        status: "awaiting_pm_approach_decision",
+        activeInteractionId: "pi_003",
+        activeOwner: { kind: "agent", id: "pm" },
+        planner: {
+          sdkSessionId: "sess_333",
+          sdkSessionStatus: "parked",
+        },
+      }),
+    );
+    await saveInteraction(
+      TEST_DIR,
+      createInteraction(JOB_ID, {
+        interactionId: "pi_003",
+        kind: "approach_decision",
+        status: "awaiting_response",
+        owner: { kind: "agent", id: "pm" },
+        routing: {
+          transport: "direct_session",
+          targetAgentId: "pm",
+        },
+        request: {
+          title: "Choose implementation approach",
+          options: [
+            { id: "a", label: "Job-embedded metadata" },
+            { id: "b", label: "Separate project registry" },
+            { id: "c", label: "Hybrid slug plus optional registry" },
+          ],
+        },
+        response: null,
+        resolution: null,
+        resume: {
+          mode: "sdk_resume",
+          target: "openagent.plan",
+          sdkSessionId: "sess_333",
+        },
+        timeouts: { softSeconds: 1800, hardSeconds: 3600 },
+      }),
+    );
+
+    const recorded = await recordInteractionAnswer(
+      TEST_DIR,
+      "pi_003",
+      "PM approves Approach C - Hybrid slug plus optional registry. Use a stable project slug on each job now, with an optional registry added later for richer metadata and GUI support.",
+      { kind: "agent", id: "pm" },
+    );
+
+    assert.equal(recorded.response.parsed?.selectedOptionId, "c");
+  });
 });
