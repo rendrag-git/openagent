@@ -16,6 +16,7 @@ import {
   createPlanEvent,
   initializePlanFeedbackJob,
   loadInteraction,
+  listOpenInteractions,
   loadPlanState,
   saveInteraction,
   savePlanState,
@@ -205,6 +206,25 @@ async function finalizePlanRunState(
       interaction.updatedAt = new Date().toISOString();
       await saveInteraction(jobDir, interaction);
     }
+  }
+
+  if (result.stopReason !== "parked" && result.success) {
+    const openInteractions = await listOpenInteractions(jobDir);
+    for (const interaction of openInteractions) {
+      interaction.status = "closed";
+      interaction.updatedAt = new Date().toISOString();
+      await saveInteraction(jobDir, interaction);
+      await appendPlanEvent(
+        jobDir,
+        createPlanEvent(jobId, "plan.interaction.closed", {
+          interactionId: interaction.interactionId,
+          reason: "planner_completed_without_pending_resume",
+        }),
+      );
+    }
+
+    updated.activeInteractionId = null;
+    updated.activeOwner = null;
   }
 
   await savePlanState(jobDir, updated);

@@ -98,6 +98,7 @@ export type PlanEventType =
   | "plan.interaction.routed"
   | "plan.interaction.response.recorded"
   | "plan.interaction.resolved"
+  | "plan.interaction.closed"
   | "plan.interaction.timed_out"
   | "plan.interaction.escalated"
   | "plan.session.bound"

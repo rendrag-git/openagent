@@ -59,9 +59,24 @@ interface RunSessionInput extends RunInput {
   canUseTool?: TaskContext["canUseTool"];
 }
 
-export async function runSession(input: RunSessionInput): Promise<TaskResult> {
-  // Dynamic import to avoid loading SDK at module level (testability)
+interface QueryLike extends AsyncIterable<Record<string, unknown>> {
+  interrupt(): Promise<void>;
+}
+
+interface RunSessionDeps {
+  queryFactory?: (config: ReturnType<typeof buildRunConfig>) => Promise<QueryLike> | QueryLike;
+}
+
+async function loadQueryFactory(): Promise<RunSessionDeps["queryFactory"]> {
   const { query } = await import("@anthropic-ai/claude-agent-sdk");
+  return (config) => query(config) as QueryLike;
+}
+
+export async function runSession(
+  input: RunSessionInput,
+  deps: RunSessionDeps = {},
+): Promise<TaskResult> {
+  const queryFactory = deps.queryFactory ?? await loadQueryFactory();
 
   const config = buildRunConfig(input);
   const startTime = Date.now();
@@ -69,10 +84,33 @@ export async function runSession(input: RunSessionInput): Promise<TaskResult> {
   let output = "";
   let stopReason: TaskResult["stopReason"] = "end_turn";
   const questions: Question[] = [];
+  let parkedError: ParkSession | null = null;
+  let activeQuery: QueryLike | null = null;
 
   // Pass canUseTool callback to SDK if provided
   if (input.canUseTool) {
-    (config.options as Record<string, unknown>).canUseTool = input.canUseTool;
+    (config.options as Record<string, unknown>).canUseTool = async (
+      toolName: string,
+      toolInput: Record<string, unknown>,
+      options: Record<string, unknown>,
+    ) => {
+      try {
+        return await input.canUseTool!(toolName, toolInput, options);
+      } catch (err) {
+        if (err instanceof ParkSession) {
+          parkedError = err;
+          if (!activeQuery) {
+            throw new Error("Cannot park session before query is initialized.");
+          }
+          await activeQuery.interrupt();
+          return {
+            behavior: "deny",
+            message: "Session parked for external feedback.",
+          };
+        }
+        throw err;
+      }
+    };
   }
 
   // If resuming, add resume option
@@ -84,7 +122,9 @@ export async function runSession(input: RunSessionInput): Promise<TaskResult> {
   }
 
   try {
-    for await (const message of query(config)) {
+    activeQuery = await queryFactory(config);
+
+    for await (const message of activeQuery) {
       // Capture session ID from init message
       if (message.type === "system" && (message as any).subtype === "init") {
         sessionId = (message as any).session_id ?? (message as any).data?.session_id ?? "";
@@ -93,7 +133,11 @@ export async function runSession(input: RunSessionInput): Promise<TaskResult> {
       // Capture result
       if ("result" in message) {
         output = (message as any).result ?? "";
-        stopReason = ((message as any).stop_reason ?? "end_turn") as TaskResult["stopReason"];
+        const rawStopReason = (message as any).stop_reason ?? "end_turn";
+        stopReason = rawStopReason === "end_turn" || rawStopReason === "max_turns" || rawStopReason === "error"
+          ? rawStopReason
+          : "error";
+        sessionId ||= (message as any).session_id ?? "";
       }
 
       // Progress callback
@@ -104,6 +148,13 @@ export async function runSession(input: RunSessionInput): Promise<TaskResult> {
           timestamp: new Date().toISOString(),
         });
       }
+    }
+
+    if (parkedError) {
+      if (!parkedError.sessionId && sessionId) {
+        parkedError.sessionId = sessionId;
+      }
+      throw parkedError;
     }
   } catch (err) {
     if (err instanceof ParkSession) {
