@@ -5,6 +5,7 @@ import {
   getWorkflowStatusForInteraction,
   hasStructuredPlanInteractionPrefix,
   parseStructuredPlanInteraction,
+  resolvePlanInteractionInput,
 } from "../src/plan-feedback-interactions.ts";
 
 describe("plan-feedback interactions", () => {
@@ -155,12 +156,12 @@ describe("plan-feedback interactions", () => {
   it("documents the structured AskUserQuestion contract", () => {
     const instruction = formatPlanInteractionInstruction();
     assert.match(instruction, /OPENAGENT_PLAN_INTERACTION:/);
-    assert.match(instruction, /direct_session/);
-    assert.match(instruction, /discord_thread/);
-    assert.match(instruction, /Do not use bulletin for single-owner approvals/);
+    assert.match(instruction, /exactly one external interlocutor/);
+    assert.match(instruction, /delegating orchestrator/);
+    assert.match(instruction, /Do not choose transport/);
     assert.match(instruction, /must be ONLY the prefixed JSON envelope/);
     assert.match(instruction, /Do not add prose before or after it/);
-    assert.match(instruction, /"owner":\{"kind":"agent","id":"pm"\}/);
+    assert.match(instruction, /For ordinary clarifications, a plain AskUserQuestion is acceptable/);
   });
 
   it("detects prefixed structured interactions even before parsing succeeds", () => {
@@ -176,5 +177,39 @@ describe("plan-feedback interactions", () => {
       }),
       false,
     );
+  });
+
+  it("infers a plain planner clarification as an orchestrator-routed interaction", () => {
+    const parsed = resolvePlanInteractionInput(
+      {
+        questions: [{ question: "Which existing queue should this use?" }],
+      },
+      "job-inferred",
+    );
+
+    assert.ok(parsed);
+    assert.equal(parsed!.interaction.kind, "clarify_product");
+    assert.equal(parsed!.interaction.request.prompt, "Which existing queue should this use?");
+    assert.equal(parsed!.interaction.owner.id, "pm");
+    assert.equal(parsed!.interaction.routing.transport, "direct_session");
+  });
+
+  it("accepts a minimal approach decision envelope without owner or routing details", () => {
+    const parsed = resolvePlanInteractionInput(
+      {
+        questions: [
+          {
+            question:
+              'OPENAGENT_PLAN_INTERACTION: {"kind":"approach_decision","title":"Choose implementation approach","prompt":"Pick one of these options.","options":[{"id":"a","label":"Thin router"},{"id":"b","label":"Dispatcher"}]}',
+          },
+        ],
+      },
+      "job-minimal",
+    );
+
+    assert.ok(parsed);
+    assert.equal(parsed!.interaction.kind, "approach_decision");
+    assert.equal(parsed!.interaction.owner.id, "pm");
+    assert.equal(parsed!.interaction.routing.transport, "direct_session");
   });
 });

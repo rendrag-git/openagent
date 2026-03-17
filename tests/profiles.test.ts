@@ -94,4 +94,11 @@ describe("profiles", () => {
     assert.ok(PROFILES.execute.systemPromptAppend.includes("Execute what you build"));
     assert.ok(PROFILES.execute.systemPromptAppend.includes("Do not hand the user a list of manual steps"));
   });
+
+  it("plan profile treats the orchestrator as the only external interlocutor", () => {
+    assert.ok(PROFILES.plan.systemPromptAppend.includes("exactly one external interlocutor"));
+    assert.ok(PROFILES.plan.systemPromptAppend.includes("delegating orchestrator"));
+    assert.ok(!PROFILES.plan.systemPromptAppend.includes("Use direct_session"));
+    assert.ok(!PROFILES.plan.systemPromptAppend.includes("Use bulletin only"));
+  });
 });

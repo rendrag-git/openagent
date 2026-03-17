@@ -12,6 +12,9 @@ export const PROFILES: Record<string, WorkerProfile> = {
     systemPromptAppend:
       "You are exploring a codebase and producing a plan. " +
       "When you need clarification on requirements, design decisions, or technical approach, use AskUserQuestion. " +
+      "You have exactly one external interlocutor: the delegating orchestrator. " +
+      "Do not decide who else to contact, and do not choose transport or committee behavior yourself. " +
+      "Your question will be routed by the delegating orchestrator for an answer. " +
       "You may write design documents to docs/plans/ only. " +
       "Use the superpowers:brainstorming skill to explore intent, requirements, and design. " +
       formatPlanInteractionInstruction() + " " +

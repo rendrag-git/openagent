@@ -64,6 +64,12 @@ export interface ParsedPlanInteraction {
   rawQuestion: string;
 }
 
+function firstQuestionText(input: AskUserQuestionInput): string | null {
+  const questions = input.questions ?? [];
+  const firstQuestion = questions.find((question) => typeof question?.question === "string");
+  return firstQuestion?.question?.trim() ?? null;
+}
+
 function parseQuestionText(text: string): PlanInteractionEnvelope | null {
   const trimmed = text.trim();
   const payload = trimmed.startsWith(STRUCTURED_PREFIX)
@@ -220,9 +226,7 @@ function normalizeCurrentStep(
 }
 
 export function hasStructuredPlanInteractionPrefix(input: AskUserQuestionInput): boolean {
-  const questions = input.questions ?? [];
-  const firstQuestion = questions.find((question) => typeof question?.question === "string");
-  return firstQuestion?.question?.trim().startsWith(STRUCTURED_PREFIX) ?? false;
+  return firstQuestionText(input)?.startsWith(STRUCTURED_PREFIX) ?? false;
 }
 
 function defaultOwner(kind: InteractionKind): PlanActor {
@@ -370,9 +374,7 @@ export function parseStructuredPlanInteraction(
   input: AskUserQuestionInput,
   jobId: string,
 ): ParsedPlanInteraction | null {
-  const questions = input.questions ?? [];
-  const firstQuestion = questions.find((question) => typeof question?.question === "string");
-  const rawQuestion = firstQuestion?.question?.trim();
+  const rawQuestion = firstQuestionText(input);
   if (!rawQuestion) return null;
 
   const envelope = parseQuestionText(rawQuestion);
@@ -430,20 +432,81 @@ export function parseStructuredPlanInteraction(
   };
 }
 
-export function formatPlanInteractionInstruction(exampleTransport: string = "direct_session"): string {
+function implicitQuestionTitle(question: string): string {
+  const trimmed = question.trim();
+  if (trimmed.length <= 80) return trimmed;
+  return `${trimmed.slice(0, 77).trimEnd()}...`;
+}
+
+export function resolvePlanInteractionInput(
+  input: AskUserQuestionInput,
+  jobId: string,
+): ParsedPlanInteraction | null {
+  const structured = parseStructuredPlanInteraction(input, jobId);
+  if (structured) {
+    return structured;
+  }
+
+  if (hasStructuredPlanInteractionPrefix(input)) {
+    throw new Error(
+      "Malformed structured plan interaction. The first AskUserQuestion string must contain only a valid OPENAGENT_PLAN_INTERACTION JSON envelope.",
+    );
+  }
+
+  const rawQuestion = firstQuestionText(input);
+  if (!rawQuestion) {
+    return null;
+  }
+
+  const kind: InteractionKind = "clarify_product";
+  const owner = defaultOwner(kind);
+  const policy = normalizeInteractionPolicy(kind, owner, null);
+  const interaction = createInteraction(jobId, {
+    interactionId: `pi_${randomUUID()}`,
+    kind,
+    status: "awaiting_response",
+    owner: policy.owner,
+    routing: {
+      transport: policy.transport,
+      targetAgentId: policy.targetAgentId,
+      sessionBindingId: null,
+      threadId: null,
+      bulletinId: null,
+      discordMessageId: null,
+    },
+    request: {
+      title: implicitQuestionTitle(rawQuestion),
+      prompt: rawQuestion,
+      recommendedOptionId: null,
+    },
+    response: null,
+    resolution: null,
+    resume: {
+      mode: "sdk_resume",
+      target: "openagent.plan",
+      sdkSessionId: null,
+    },
+    timeouts: defaultTimeouts(kind),
+  });
+
+  return {
+    interaction,
+    currentStep: defaultStep(kind),
+    rawQuestion,
+  };
+}
+
+export function formatPlanInteractionInstruction(): string {
   return (
-    "For planning feedback loops, AskUserQuestion should carry a structured JSON envelope in the first question string. " +
-    `The first question string must be ONLY the prefixed JSON envelope. Prefix it with ${STRUCTURED_PREFIX}. ` +
+    "You have exactly one external interlocutor: the delegating orchestrator. " +
+    "If you need clarification or approval, use AskUserQuestion and treat it as a message to the orchestrator. " +
+    "Do not choose transport, target agent, bulletin, or Discord behavior yourself. " +
+    "For approval gates and structured planning loops, the first question string must be ONLY the prefixed JSON envelope. " +
+    `Prefix it with ${STRUCTURED_PREFIX}. ` +
     "Do not add prose before or after it. " +
-    "Use exact shapes: " +
-    '"owner":{"kind":"agent","id":"pm"}, ' +
-    '"routing":{"transport":"direct_session","targetAgentId":"pm"}, ' +
-    '"currentStep":{"kind":"approach_decision","label":"Awaiting PM approach decision"}, ' +
-    '"options":[{"id":"a","label":"Option A","summary":"..."}]. ' +
-    `Use direct_session for clarify_product, clarify_specialist, approach_decision, and PM design_section_review. ` +
-    'After an approach is approved, every design section approval gate must use AskUserQuestion with kind "design_section_review". ' +
+    'Use exact shapes: "kind", "title", "prompt", "currentStep", and when needed "options":[{"id":"a","label":"Option A","summary":"..."}]. ' +
+    'For approach selection, use kind "approach_decision". After an approach is approved, every design section approval gate must use kind "design_section_review". ' +
     'Never write "awaiting your approval" or "before proceeding to Section X" in normal output. If approval is needed, emit the structured interaction and stop. ' +
-    `Use bulletin only for clarify_advisory. Use discord_thread for human review or explicit human design escalation. ` +
-    `Do not use bulletin for single-owner approvals or product decisions. Example preferred transport: ${exampleTransport}.`
+    "For ordinary clarifications, a plain AskUserQuestion is acceptable and will be routed by the orchestrator."
   );
 }

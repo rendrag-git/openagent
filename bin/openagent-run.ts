@@ -26,8 +26,7 @@ import { dispatchPlanInteraction } from "../src/plan-feedback-dispatch.ts";
 import { applyPlanOutputGuards } from "../src/plan-feedback-guards.ts";
 import {
   getWorkflowStatusForInteraction,
-  hasStructuredPlanInteractionPrefix,
-  parseStructuredPlanInteraction,
+  resolvePlanInteractionInput,
 } from "../src/plan-feedback-interactions.ts";
 import { routePlanInteraction } from "../src/plan-feedback-routing.ts";
 import {
@@ -460,15 +459,14 @@ async function bulletinAskHandler(input: Record<string, unknown>): Promise<strin
 
 const questionLog: Array<{ question: string; answers: string[]; timestamp: string }> = [];
 
-async function persistStructuredPlanInteraction(
-  input: Record<string, unknown>,
+async function persistResolvedPlanInteraction(
+  parsed: Awaited<ReturnType<typeof resolvePlanInteractionInput>>,
   workerName: string,
   jobDir: string,
   jobId: string,
 ): Promise<string[] | never> {
-  const parsed = parseStructuredPlanInteraction(input, jobId);
   if (!parsed) {
-    throw new Error("Expected a structured plan interaction but could not parse the request.");
+    throw new Error("Expected a plan interaction but could not resolve the request.");
   }
 
   await saveInteraction(jobDir, parsed.interaction);
@@ -564,18 +562,12 @@ function buildCanUseTool(
     return createCanUseTool({
       onAskUserQuestion: async (input) => {
         if (context.jobDir) {
-          const parsed = parseStructuredPlanInteraction(input, context.jobId);
+          const parsed = resolvePlanInteractionInput(input, context.jobId);
           if (parsed) {
-            return persistStructuredPlanInteraction(input, workerName, context.jobDir, context.jobId);
-          }
-          if (hasStructuredPlanInteractionPrefix(input)) {
-            throw new Error(
-              "Malformed structured plan interaction. The first AskUserQuestion string must contain only a valid OPENAGENT_PLAN_INTERACTION JSON envelope with exact owner, routing, currentStep, and options shapes.",
-            );
+            return persistResolvedPlanInteraction(parsed, workerName, context.jobDir, context.jobId);
           }
         }
-
-        return bulletinAskHandler(input);
+        throw new Error("Plan worker requires a job directory to route AskUserQuestion through the orchestrator.");
       },
       questionLog,
     });
