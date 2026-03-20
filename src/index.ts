@@ -130,3 +130,17 @@ export type {
 } from "./plan-feedback-routing.ts";
 
 export { dispatchPlanInteraction } from "./plan-feedback-dispatch.ts";
+
+// ACP-facing runtime adapter
+export { createOpenAgentRuntimeAdapter } from "./acp-runtime.ts";
+export type {
+  OpenAgentRuntimeAdapter,
+  OpenAgentRuntimeAdapterDeps,
+  OpenAgentRuntimeHandle,
+  OpenAgentRuntimeLinkage,
+  OpenAgentRuntimeResumeInput,
+  OpenAgentRuntimeSessionStatus,
+  OpenAgentRuntimeTurnInput,
+  OpenAgentRuntimeTurnResult,
+  OpenAgentWorkerName,
+} from "./acp-runtime.ts";

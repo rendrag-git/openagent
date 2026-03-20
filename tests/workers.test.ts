@@ -27,6 +27,10 @@ describe("public API", () => {
     assert.equal(typeof openagent.resume, "function");
   });
 
+  it("exports ACP-facing runtime adapter", () => {
+    assert.equal(typeof openagent.createOpenAgentRuntimeAdapter, "function");
+  });
+
   it("exports types", () => {
     // Verify type re-exports are accessible (runtime check for ParkSession class)
     assert.equal(typeof openagent.ParkSession, "function");
